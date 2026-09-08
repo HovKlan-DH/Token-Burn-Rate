@@ -85,18 +85,29 @@ the reason is shown in place of the bars.
 
 ## Build
 
-```bash
-./build-all.sh            # all four targets
+**Windows, portable single file:**
+
+```powershell
+.\build-windows.ps1
 ```
 
-or one platform:
+or directly:
 
 ```bash
 dotnet publish Token-Burn-Rate.csproj -c Release -r win-x64 -o publish/win-x64
 ```
 
+Either produces one file — `publish\win-x64\TokenBurnRate.exe` (~46 MB). Copy just that
+file to the target machine; it needs nothing beside it and no .NET install.
+
+All four platforms at once:
+
+```bash
+./build-all.sh
+```
+
 Targets: `win-x64`, `linux-x64`, `osx-arm64`, `osx-x64`. Output is one self-contained
-executable (~48 MB) needing no .NET install on the target machine.
+executable per target, needing no .NET install on the target machine.
 
 Trimming is intentionally disabled — Avalonia resolves XAML types by reflection, and
 trimming breaks that only in published builds, where it is hardest to diagnose.
@@ -114,6 +125,34 @@ macOS builds are unsigned, so Gatekeeper quarantines them on first run:
 ```bash
 xattr -d com.apple.quarantine TokenBurnRate
 ```
+
+## Running it on a work machine
+
+The executable is unsigned, so **SmartScreen will warn on first run** ("Windows protected
+your PC"). Choose *More info* → *Run anyway*. If it was downloaded or copied from a network
+share, Windows may also mark it blocked — clear that with:
+
+```powershell
+Unblock-File .\TokenBurnRate.exe
+```
+
+It needs no installer and no admin rights, and writes only
+`%APPDATA%\TokenBurnRate\window.json` (the saved window position).
+
+What each panel needs, and what happens when it is missing:
+
+| Panel | Needs | If unavailable |
+| --- | --- | --- |
+| Claude | Claude Code signed in on that machine | panel states why, e.g. "not signed in" |
+| Copilot | `gh auth login` on that machine | panel states "Not signed in. Run: gh auth login" |
+
+The panels are independent, so if only one of the two AIs is set up at work the other simply
+reports why and the app still runs. Both read credentials that already exist on the machine;
+the app stores none of its own and writes to neither.
+
+> **Corporate network note:** the app reads your own usage from `api.anthropic.com` and
+> `api.github.com` over HTTPS. If that traffic is proxied or blocked, the affected panel
+> shows the error rather than failing silently.
 
 ## Usage
 
