@@ -69,8 +69,8 @@
         </StackPanel>
       </Grid>
 
-      <!-- Claude -->
-      <StackPanel Spacing="7">
+      <!-- Claude: hidden entirely when the service is not present on this machine -->
+      <StackPanel Spacing="7" IsVisible="{Binding ClaudeVisible}">
         <Grid ColumnDefinitions="Auto,*">
           <TextBlock Grid.Column="0" Text="CLAUDE" Classes="section" Foreground="#D97757"/>
           <TextBlock Grid.Column="1" Text="{Binding ClaudeSubtitle}" Classes="subtitle"
@@ -95,10 +95,11 @@
         </ItemsControl>
       </StackPanel>
 
-      <Border Height="1" Background="#26282D"/>
+      <Border Height="1" Background="#26282D"
+              IsVisible="{Binding ClaudeVisible}"/>
 
       <!-- Copilot -->
-      <StackPanel Spacing="7">
+      <StackPanel Spacing="7" IsVisible="{Binding CopilotVisible}">
         <Grid ColumnDefinitions="Auto,*">
           <TextBlock Grid.Column="0" Text="GITHUB COPILOT" Classes="section" Foreground="#58A6FF"/>
           <TextBlock Grid.Column="1" Text="{Binding CopilotSubtitle}" Classes="subtitle"
@@ -122,6 +123,17 @@
             </DataTemplate>
           </ItemsControl.ItemTemplate>
         </ItemsControl>
+
+        <!-- Shown only when a sign-in would fix the panel; uses the GitHub device flow,
+             so no CLI install and no admin rights are required. -->
+        <Button Name="SignInButton"
+                IsVisible="{Binding CopilotNeedsSignIn}"
+                Content="{Binding SignInText}"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Center"
+                Padding="0,5" FontSize="10"
+                Background="#1F6FEB" Foreground="White"
+                BorderThickness="0" CornerRadius="4"/>
       </StackPanel>
 
       <TextBlock Text="{Binding StatusText}" Classes="detail" HorizontalAlignment="Center"/>

@@ -35,6 +35,9 @@ public partial class MainWindow : Window
         if (this.FindControl<Button>("CloseButton") is { } close)
             close.Click += (_, _) => Close();
 
+        if (this.FindControl<Button>("SignInButton") is { } signIn)
+            signIn.Click += async (_, _) => await _vm.SignInToGitHubAsync(_cts.Token);
+
         // Copilot's quota is a remote call and Claude's parse is incremental, so a 60s
         // cadence keeps the display live without hammering either source.
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(60) };

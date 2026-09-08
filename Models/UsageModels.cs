@@ -59,6 +59,8 @@ public sealed class CopilotStatus
     public DateTimeOffset? ResetDate { get; init; }
     public List<CopilotQuota> Quotas { get; init; } = new();
     public string? Error { get; set; }
+    /// <summary>True when the fix is an interactive sign-in rather than a transient failure.</summary>
+    public bool NeedsSignIn { get; set; }
     public bool IsAvailable => Error is null && Quotas.Count > 0;
 }
 

@@ -143,12 +143,29 @@ What each panel needs, and what happens when it is missing:
 
 | Panel | Needs | If unavailable |
 | --- | --- | --- |
-| Claude | Claude Code signed in on that machine | panel states why, e.g. "not signed in" |
-| Copilot | `gh auth login` on that machine | panel states "Not signed in. Run: gh auth login" |
+| Claude | Claude Code signed in on that machine | the whole panel is hidden |
+| Copilot | a GitHub sign-in (see below) | panel offers a **Sign in to GitHub** button |
 
-The panels are independent, so if only one of the two AIs is set up at work the other simply
-reports why and the app still runs. Both read credentials that already exist on the machine;
-the app stores none of its own and writes to neither.
+A service that is not present on the machine has its panel hidden entirely and the window
+shrinks, rather than showing a column of `n/a`. On a machine with only Copilot, that is all
+you see.
+
+**Signing in to Copilot without the GitHub CLI.** The widget resolves a token in this order:
+
+1. `GH_TOKEN` / `GITHUB_TOKEN` environment variable
+2. the GitHub CLI, if it happens to be installed (`gh auth token`)
+3. a token the widget obtained itself
+
+Nothing needs installing for (3): click **Sign in to GitHub**, and the widget shows a short
+code and opens `github.com/login/device`. Enter the code once and it stores the token in
+`%APPDATA%\TokenBurnRate\github.json`, readable only by your user. This is GitHub's standard
+OAuth device flow — no admin rights, no CLI, no client secret. The requested scope is
+`read:user`, the least privilege that still answers the Copilot quota endpoint.
+
+VS Code's own Copilot sign-in is deliberately *not* reused: it is encrypted with the OS
+credential store, and reaching into another application's secrets would be both fragile and
+inappropriate. That is why VS Code can show Copilot working while the widget still asks you
+to sign in.
 
 > **Corporate network note:** the app reads your own usage from `api.anthropic.com` and
 > `api.github.com` over HTTPS. If that traffic is proxied or blocked, the affected panel

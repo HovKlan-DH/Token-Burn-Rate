@@ -53,6 +53,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string _copilotSubtitle = "";
     private string _burnRateText = "";
     private bool _isRefreshing;
+    private bool _claudeVisible = true;
+    private bool _copilotVisible = true;
+    private bool _copilotNeedsSignIn;
+    private bool _signInRunning;
+    private string _signInText = "";
 
     public ObservableCollection<BarViewModel> ClaudeBars { get; } = new();
     public ObservableCollection<BarViewModel> CopilotBars { get; } = new();
@@ -62,6 +67,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string CopilotSubtitle { get => _copilotSubtitle; set => Set(ref _copilotSubtitle, value); }
     public string BurnRateText { get => _burnRateText; set => Set(ref _burnRateText, value); }
     public bool IsRefreshing { get => _isRefreshing; set => Set(ref _isRefreshing, value); }
+
+    /// <summary>A service with no data at all hides its whole panel rather than showing n/a rows.</summary>
+    public bool ClaudeVisible { get => _claudeVisible; set => Set(ref _claudeVisible, value); }
+    public bool CopilotVisible { get => _copilotVisible; set => Set(ref _copilotVisible, value); }
+    public bool CopilotNeedsSignIn { get => _copilotNeedsSignIn; set => Set(ref _copilotNeedsSignIn, value); }
+    public string SignInText { get => _signInText; set => Set(ref _signInText, value); }
 
     public MainViewModel()
     {
@@ -116,16 +127,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 bar.IsEnabled = true;
             }
         }
-        else
-        {
-            foreach (var bar in ClaudeBars)
-            {
-                bar.ValueText = "n/a";
-                bar.DetailText = "";
-                bar.Fraction = 0;
-                bar.IsEnabled = false;
-            }
-        }
+        ClaudeVisible = limits.IsAvailable;
 
         // Transcripts still supply what the API omits: absolute tokens and burn rate.
         var tokenText = "";
@@ -139,9 +141,65 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 records, UsageAggregator.SessionWindow, now)) + " tokens";
         }
 
-        ClaudeSubtitle = limits.IsAvailable
-            ? string.IsNullOrEmpty(limits.Plan) ? tokenText : $"{limits.Plan} · {tokenText}"
-            : limits.Error ?? "unavailable";
+        ClaudeSubtitle = string.IsNullOrEmpty(limits.Plan) ? tokenText : $"{limits.Plan} · {tokenText}";
+    }
+
+    /// <summary>
+    /// Runs the GitHub device-flow sign-in. Shows the code in the panel, opens the browser,
+    /// then waits for approval. Requires no GitHub CLI and no admin rights.
+    /// </summary>
+    public async Task SignInToGitHubAsync(CancellationToken ct = default)
+    {
+        if (_signInRunning) return;
+        _signInRunning = true;
+        try
+        {
+            var auth = new GitHubDeviceAuth();
+            var code = await auth.RequestCodeAsync(ct).ConfigureAwait(true);
+
+            SignInText = $"Code: {code.UserCode}";
+            CopilotSubtitle = "waiting for browser approval…";
+            TryOpenBrowser(code.VerificationUri);
+
+            var token = await auth.PollForTokenAsync(code, ct).ConfigureAwait(true);
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                SignInText = "Sign in to GitHub";
+                CopilotSubtitle = "sign-in cancelled or timed out";
+                return;
+            }
+
+            GitHubDeviceAuth.SaveToken(token);
+            _copilot.InvalidateToken();
+            await RefreshCopilotAsync(ct).ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            SignInText = "Sign in to GitHub";
+            CopilotSubtitle = "sign-in failed: " + ex.Message;
+        }
+        finally
+        {
+            _signInRunning = false;
+        }
+    }
+
+    private static void TryOpenBrowser(string url)
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url)
+            {
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception)
+        {
+            // Headless or restricted desktop: the code is still shown for manual entry.
+        }
     }
 
     /// <summary>Grows or shrinks a bar list so it matches however many limits the API returned.</summary>
@@ -157,10 +215,18 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
         if (!status.IsAvailable)
         {
+            // Keep the panel when a sign-in would fix it, so the button has somewhere to
+            // live; hide it outright for anything else.
+            CopilotNeedsSignIn = status.NeedsSignIn;
+            CopilotVisible = status.NeedsSignIn;
             CopilotSubtitle = status.Error ?? "unavailable";
+            SignInText = "Sign in to GitHub";
             foreach (var bar in CopilotBars) { bar.ValueText = "n/a"; bar.Fraction = 0; bar.IsEnabled = false; }
             return;
         }
+
+        CopilotNeedsSignIn = false;
+        CopilotVisible = true;
 
         // On a work machine the plan is org-assigned, so show which org grants it as well
         // as the plan tier; on a personal account there is no org and the tier stands alone.

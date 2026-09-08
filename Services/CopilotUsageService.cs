@@ -19,14 +19,17 @@ namespace Token_Burn_Rate.Services;
 /// real quota buckets (completions / chat / premium interactions) rather than
 /// today/week/month, which cannot be derived.
 ///
-/// The token is taken from the GitHub CLI, which is already authenticated on a developer
-/// machine, so the app needs no credentials of its own.
+/// Tokens are resolved in order: an explicit environment variable, then the GitHub CLI if
+/// it happens to be installed, then a token this app obtained itself via the device flow.
+/// The CLI is only a convenience - a machine without it (common on a locked-down work
+/// build) can sign in from the widget without installing anything.
 /// </summary>
 public sealed class CopilotUsageService
 {
     private const string Endpoint = "https://api.github.com/copilot_internal/user";
     private readonly HttpClient _http;
     private string? _cachedToken;
+    private bool _usedStoredToken;
 
     public CopilotUsageService(HttpClient? http = null)
     {
@@ -34,6 +37,9 @@ public sealed class CopilotUsageService
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("TokenBurnRate/1.0");
         _http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
     }
+
+    /// <summary>Forgets any cached token so the next poll re-resolves it.</summary>
+    public void InvalidateToken() => _cachedToken = null;
 
     public async Task<CopilotStatus> GetStatusAsync(CancellationToken ct = default)
     {
@@ -48,7 +54,7 @@ public sealed class CopilotUsageService
         }
 
         if (string.IsNullOrWhiteSpace(token))
-            return new CopilotStatus { Error = "Not signed in. Run: gh auth login" };
+            return new CopilotStatus { Error = "Not signed in", NeedsSignIn = true };
 
         try
         {
@@ -56,6 +62,13 @@ public sealed class CopilotUsageService
             req.Headers.Authorization = new AuthenticationHeaderValue("token", token);
 
             using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+            if (resp.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            {
+                // A stored token that GitHub no longer accepts: drop it and ask again.
+                _cachedToken = null;
+                if (_usedStoredToken) GitHubDeviceAuth.ClearToken();
+                return new CopilotStatus { Error = "Sign-in expired", NeedsSignIn = true };
+            }
             if (!resp.IsSuccessStatusCode)
             {
                 _cachedToken = null; // force a refresh next time
@@ -137,11 +150,30 @@ public sealed class CopilotUsageService
         foreach (var name in new[] { "GH_TOKEN", "GITHUB_TOKEN" })
         {
             var v = Environment.GetEnvironmentVariable(name);
-            if (!string.IsNullOrWhiteSpace(v)) return _cachedToken = v.Trim();
+            if (!string.IsNullOrWhiteSpace(v))
+            {
+                _usedStoredToken = false;
+                return _cachedToken = v.Trim();
+            }
         }
 
-        _cachedToken = await RunGhAuthTokenAsync(ct).ConfigureAwait(false);
-        return _cachedToken;
+        // The CLI, when present, keeps the app zero-setup on a developer machine.
+        var cli = await RunGhAuthTokenAsync(ct).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(cli))
+        {
+            _usedStoredToken = false;
+            return _cachedToken = cli;
+        }
+
+        // Otherwise fall back to a token this app obtained via the device flow.
+        var stored = GitHubDeviceAuth.LoadToken();
+        if (!string.IsNullOrWhiteSpace(stored))
+        {
+            _usedStoredToken = true;
+            return _cachedToken = stored;
+        }
+
+        return null;
     }
 
     private static async Task<string?> RunGhAuthTokenAsync(CancellationToken ct)
