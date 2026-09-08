@@ -1,0 +1,155 @@
+using System;
+using System.IO;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+namespace Token_Burn_Rate.Services;
+
+/// <summary>
+/// The app's own state, kept in a single JSON file named after the executable and sitting
+/// beside it, so a portable copy carries its history with it.
+///
+/// If that folder cannot be written - a read-only share, or Program Files - the file falls
+/// back to %APPDATA%, because losing every day's opening balance would break the pacing
+/// bars entirely. The GitHub token deliberately does not live here: it stays in %APPDATA%
+/// with owner-only permissions, since a portable folder may be a USB stick or a share.
+/// </summary>
+public sealed class AppState
+{
+    // ---- persisted shape ---------------------------------------------------------------
+
+    /// <summary>Window position, so the widget reopens where it was left.</summary>
+    [JsonPropertyName("window")]
+    public WindowState? Window { get; set; }
+
+    /// <summary>Opening balances used to derive spend-per-day.</summary>
+    [JsonPropertyName("pacing")]
+    public PacingState? Pacing { get; set; }
+
+    public sealed class WindowState
+    {
+        [JsonPropertyName("x")] public int X { get; set; }
+        [JsonPropertyName("y")] public int Y { get; set; }
+    }
+
+    public sealed class PacingState
+    {
+        [JsonPropertyName("day")] public string Day { get; set; } = "";
+        [JsonPropertyName("dayOpening")] public double DayOpening { get; set; }
+        [JsonPropertyName("weekStart")] public string WeekStart { get; set; } = "";
+        [JsonPropertyName("weekOpening")] public double WeekOpening { get; set; }
+    }
+
+    // ---- location ----------------------------------------------------------------------
+
+    private static readonly Lazy<string> _path = new(ResolvePath);
+    private static readonly object _gate = new();
+
+    public static string Path => _path.Value;
+
+    /// <summary>
+    /// Beside the executable, named after it (TokenBurnRate.exe -> TokenBurnRate.json),
+    /// unless that directory is not writable.
+    /// </summary>
+    private static string ResolvePath()
+    {
+        try
+        {
+            var exe = Environment.ProcessPath;
+            if (!string.IsNullOrWhiteSpace(exe))
+            {
+                var dir = System.IO.Path.GetDirectoryName(exe);
+                var name = System.IO.Path.GetFileNameWithoutExtension(exe);
+                if (!string.IsNullOrWhiteSpace(dir) && !string.IsNullOrWhiteSpace(name))
+                {
+                    var candidate = System.IO.Path.Combine(dir, name + ".json");
+                    if (IsWritable(dir)) return candidate;
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // Fall through to the per-user location.
+        }
+
+        var appData = System.IO.Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "TokenBurnRate");
+        Directory.CreateDirectory(appData);
+        return System.IO.Path.Combine(appData, "TokenBurnRate.json");
+    }
+
+    /// <summary>Probes the directory by creating and deleting a temporary file.</summary>
+    private static bool IsWritable(string dir)
+    {
+        try
+        {
+            var probe = System.IO.Path.Combine(dir, $".tbr-{Guid.NewGuid():N}.tmp");
+            using (File.Create(probe, 1, FileOptions.DeleteOnClose)) { }
+            return true;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    // ---- load / save -------------------------------------------------------------------
+
+    private static readonly JsonSerializerOptions Options = new()
+    {
+        WriteIndented = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+
+    public static AppState Load()
+    {
+        lock (_gate)
+        {
+            try
+            {
+                if (!File.Exists(Path)) return new AppState();
+                var json = File.ReadAllText(Path);
+                return JsonSerializer.Deserialize<AppState>(json, Options) ?? new AppState();
+            }
+            catch (Exception)
+            {
+                return new AppState();      // a corrupt file must never stop the app
+            }
+        }
+    }
+
+    /// <summary>
+    /// Applies a change and writes the whole file back. Read-modify-write keeps the two
+    /// independent writers - the window and the pacing tracker - from clobbering each
+    /// other's section.
+    /// </summary>
+    public static void Update(Action<AppState> mutate)
+    {
+        lock (_gate)
+        {
+            AppState state;
+            try
+            {
+                state = File.Exists(Path)
+                    ? JsonSerializer.Deserialize<AppState>(File.ReadAllText(Path), Options) ?? new AppState()
+                    : new AppState();
+            }
+            catch (Exception)
+            {
+                state = new AppState();
+            }
+
+            mutate(state);
+
+            try
+            {
+                File.WriteAllText(Path, JsonSerializer.Serialize(state, Options));
+            }
+            catch (Exception)
+            {
+                // Best effort: an unwritable file loses tracking, never the running app.
+            }
+        }
+    }
+}

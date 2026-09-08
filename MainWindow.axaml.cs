@@ -1,6 +1,4 @@
 using System;
-using System.IO;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
@@ -63,26 +61,11 @@ public partial class MainWindow : Window
 
     // ---- window position persistence -------------------------------------------------
 
-    private static string SettingsPath
-    {
-        get
-        {
-            var dir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "TokenBurnRate");
-            Directory.CreateDirectory(dir);
-            return Path.Combine(dir, "window.json");
-        }
-    }
-
-    private sealed record WidgetPlacement(int X, int Y);
-
     private void RestorePosition()
     {
         try
         {
-            if (!File.Exists(SettingsPath)) return;
-            var state = JsonSerializer.Deserialize<WidgetPlacement>(File.ReadAllText(SettingsPath));
+            var state = Services.AppState.Load().Window;
             if (state is null) return;
 
             // Only restore if the point still lands on a connected screen, otherwise the
@@ -104,8 +87,11 @@ public partial class MainWindow : Window
     {
         try
         {
-            File.WriteAllText(SettingsPath,
-                JsonSerializer.Serialize(new WidgetPlacement(Position.X, Position.Y)));
+            Services.AppState.Update(a => a.Window = new Services.AppState.WindowState
+            {
+                X = Position.X,
+                Y = Position.Y,
+            });
         }
         catch (Exception)
         {

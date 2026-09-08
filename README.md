@@ -73,8 +73,8 @@ shows above 100% — the bar stops at full but the number keeps climbing.
 | Week | since Monday | daily allowance x business days left this week, plus what the week already spent |
 | Month | the period total from GitHub | the full entitlement |
 
-Only the current day and week are tracked (in `%APPDATA%\TokenBurnRate\pacing.json`), so a
-day the app is never opened simply starts fresh at the next launch. The panel picks whichever
+Only the current day and week are tracked (see [State file](#state-file)), so a day the app
+is never opened simply starts fresh at the next launch. The panel picks whichever
 quota actually meters spend — premium interactions on a paid org seat, completions on a
 personal plan — and hides itself when a plan meters nothing.
 
@@ -169,8 +169,8 @@ share, Windows may also mark it blocked — clear that with:
 Unblock-File .\TokenBurnRate.exe
 ```
 
-It needs no installer and no admin rights, and writes only
-`%APPDATA%\TokenBurnRate\window.json` (the saved window position).
+It needs no installer and no admin rights. See [State file](#state-file) for what it
+writes.
 
 What each panel needs, and what happens when it is missing:
 
@@ -203,6 +203,36 @@ to sign in.
 > **Corporate network note:** the app reads your own usage from `api.anthropic.com` and
 > `api.github.com` over HTTPS. If that traffic is proxied or blocked, the affected panel
 > shows the error rather than failing silently.
+
+## State file
+
+The app keeps its state in a single JSON file **next to the executable, named after it** -
+`TokenBurnRate.exe` writes `TokenBurnRate.json` - so a portable copy carries its spending
+history with it:
+
+```json
+{
+  "window": { "x": 192, "y": 192 },
+  "pacing": {
+    "day": "2026-09-08",
+    "dayOpening": 1961,
+    "weekStart": "2026-09-07",
+    "weekOpening": 1961
+  }
+}
+```
+
+`pacing` holds the credit balance recorded at the first launch of the day and of the week,
+which is what makes the Day and Week bars measurable at all. Deleting the file re-anchors
+both to the current balance at the next launch; nothing else is lost.
+
+If the executable's own folder cannot be written - a read-only network share, or
+`Program Files` - the file falls back to `%APPDATA%\TokenBurnRate\TokenBurnRate.json`, so
+tracking keeps working rather than silently losing each day's opening balance.
+
+The GitHub token is deliberately **not** kept here. It stays in
+`%APPDATA%\TokenBurnRate\github.json` with owner-only permissions, because a portable
+folder may well be a USB stick or a shared drive.
 
 ## Usage
 

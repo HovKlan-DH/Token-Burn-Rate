@@ -1,6 +1,4 @@
 using System;
-using System.IO;
-using System.Text.Json;
 using Token_Burn_Rate.Models;
 
 namespace Token_Burn_Rate.Services;
@@ -18,26 +16,6 @@ namespace Token_Burn_Rate.Services;
 /// </summary>
 public sealed class CopilotPacingService
 {
-    private sealed class PacingState
-    {
-        public string Day { get; set; } = "";            // yyyy-MM-dd of the stored opening balance
-        public double DayOpening { get; set; }
-        public string WeekStart { get; set; } = "";      // yyyy-MM-dd of that week's Monday
-        public double WeekOpening { get; set; }
-    }
-
-    private static string StatePath
-    {
-        get
-        {
-            var dir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "TokenBurnRate");
-            Directory.CreateDirectory(dir);
-            return Path.Combine(dir, "pacing.json");
-        }
-    }
-
     /// <summary>
     /// Picks the bucket that actually meters spend. Business and Enterprise seats meter
     /// premium interactions while completions and chat are unlimited; a personal plan
@@ -101,23 +79,12 @@ public sealed class CopilotPacingService
     /// rolled over. Only the current day and week are tracked, so a day the app is never
     /// opened simply starts fresh at the next launch.
     /// </summary>
-    private static PacingState LoadOrRoll(double remaining, DateTime now)
+    private static AppState.PacingState LoadOrRoll(double remaining, DateTime now)
     {
         var today = now.Date.ToString("yyyy-MM-dd");
         var weekStart = BusinessDays.StartOfWeek(now).ToString("yyyy-MM-dd");
 
-        PacingState state;
-        try
-        {
-            state = File.Exists(StatePath)
-                ? JsonSerializer.Deserialize<PacingState>(File.ReadAllText(StatePath)) ?? new PacingState()
-                : new PacingState();
-        }
-        catch (Exception)
-        {
-            state = new PacingState();      // corrupt state must never block the display
-        }
-
+        var state = AppState.Load().Pacing ?? new AppState.PacingState();
         var dirty = false;
 
         if (state.Day != today)
@@ -146,13 +113,8 @@ public sealed class CopilotPacingService
             dirty = true;
         }
 
-        if (dirty) Save(state);
+        if (dirty) AppState.Update(a => a.Pacing = state);
         return state;
     }
 
-    private static void Save(PacingState state)
-    {
-        try { File.WriteAllText(StatePath, JsonSerializer.Serialize(state)); }
-        catch (Exception) { }
-    }
 }
