@@ -76,12 +76,14 @@ cannot drift from what the vendor dashboards report.
   `~/.claude/.credentials.json` (honours `CLAUDE_CONFIG_DIR`) and **never written back**:
   Claude Code owns that file and refreshes the token itself roughly every 8 hours. If the
   token has expired the panel says so; run `claude` once to refresh it.
-- **Copilot panel** — [GitHub CLI](https://cli.github.com/) installed and authenticated
-  (`gh auth login`). `GH_TOKEN` / `GITHUB_TOKEN` are used first if set. Works with personal
-  and org-assigned seats alike; the same binary adapts to whichever it finds.
+- **Copilot panel** — a GitHub sign-in. Nothing needs installing: click **Sign in to
+  GitHub** in the panel and enter the code it shows (OAuth device flow). If the
+  [GitHub CLI](https://cli.github.com/) is already authenticated, or `GH_TOKEN` /
+  `GITHUB_TOKEN` is set, those are used first and there is nothing to do. Works with
+  personal and org-assigned seats alike; the same binary adapts to whichever it finds.
 
-Each panel degrades independently: if one source is unavailable the other still works, and
-the reason is shown in place of the bars.
+Each panel degrades independently: if one source is unavailable the other still works. A
+service that is missing entirely has its panel hidden and the window shrinks to fit.
 
 ## Build
 
