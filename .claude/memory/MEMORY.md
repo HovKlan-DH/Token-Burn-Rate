@@ -1,0 +1,2 @@
+- [Token-Burn-Rate runs on two machines](token-burn-rate-widget.md) — home is a free personal Copilot plan, work is org-assigned; one binary must adapt to both.
+- [M365 Copilot has no readable usage API](m365-copilot-no-usage-api.md) — separate pool from GitHub Copilot, but needs a tenant admin role and exposes no quota at all.
