@@ -6,7 +6,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Token_Burn_Rate.Services;
+namespace TokenBurnRate.Services;
 
 /// <summary>
 /// Signs in to GitHub with the OAuth device flow, so the widget works on a machine that

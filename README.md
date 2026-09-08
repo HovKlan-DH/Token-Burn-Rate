@@ -1,4 +1,4 @@
-# Token Burn Rate
+# TokenBurnRate
 
 A small always-on-top desktop widget showing live AI usage for **Claude Code** and
 **GitHub Copilot**, as a single portable executable for Windows, Linux and macOS.
@@ -47,7 +47,7 @@ The panel adapts to whichever account the machine is signed in to, with no confi
 | Completions / Chat | quota bars | often unlimited, shown as ∞ |
 | Premium interactions | dimmed, not in plan | real bar (e.g. 177/300) |
 
-### GitHub Copilot .: My Pace — day / week / month
+### GitHub Copilot : My Pace — day / week / month
 
 A second Copilot panel, below the first, that reframes the same credit balance as "how much
 can I spend today". GitHub reports only a point-in-time balance, so daily spend is
@@ -127,7 +127,7 @@ service that is missing entirely has its panel hidden and the window shrinks to 
 or directly:
 
 ```bash
-dotnet publish Token-Burn-Rate.csproj -c Release -r win-x64 -o publish/win-x64
+dotnet publish TokenBurnRate.csproj -c Release -r win-x64 -o publish/win-x64
 ```
 
 Either produces one file — `publish\win-x64\TokenBurnRate.exe` (~46 MB). Copy just that
@@ -144,6 +144,23 @@ executable per target, needing no .NET install on the target machine.
 
 Trimming is intentionally disabled — Avalonia resolves XAML types by reflection, and
 trimming breaks that only in published builds, where it is hardest to diagnose.
+
+### Icon
+
+The app icon is a usage bar burning down like a fuse. [Assets/icon.svg](Assets/icon.svg)
+is the editable source; [Assets/icon.ico](Assets/icon.ico) is what actually ships, wired
+up twice because they are separate mechanisms — `ApplicationIcon` stamps the `.exe`, and
+`Window.Icon` loads the embedded `AvaloniaResource` at runtime.
+
+Regenerate the `.ico` and the preview PNGs after editing the SVG:
+
+```bash
+python Assets/render-icon.py Assets
+```
+
+The renderer is stdlib-only — no ImageMagick or Inkscape needed. It duplicates the SVG
+geometry rather than parsing it, so edit both together. Sizes below 40px drop the
+hot-core highlight, which turns to mush at that scale.
 
 ### macOS / Linux notes
 
@@ -233,6 +250,64 @@ tracking keeps working rather than silently losing each day's opening balance.
 The GitHub token is deliberately **not** kept here. It stays in
 `%APPDATA%\TokenBurnRate\github.json` with owner-only permissions, because a portable
 folder may well be a USB stick or a shared drive.
+
+## Crash reports
+
+An unhandled exception is written to `TokenBurnRate.crash.20261231235959.log` - the
+executable's name, then the timestamp - in the same folder as the state file, so a crash
+can be sent on rather than lost with the process. Each crash gets its own file, holding
+the time, app version, OS and runtime, and the full exception chain including inner
+exceptions.
+
+Nothing is written during normal operation, and the app never deletes these files - clear
+them out yourself once they are no longer wanted.
+
+> One exception cannot be logged: a `StackOverflowException` terminates the process
+> immediately by design, and .NET runs no handler for it. The tray-quit crash that
+> produced one has been fixed.
+
+## Staying on top
+
+The widget floats above other windows by default - being visible while you work in an
+editor is the point of it. The **pin** button beside the close button toggles that: dimmed
+means it behaves like any ordinary window and whatever you launch next will cover it. The
+choice is remembered in the state file.
+
+## Closing to the tray
+
+The close button minimises to the notification area rather than exiting, so the widget
+keeps tracking in the background. Left-click the tray icon to bring it back; its
+right-click menu has **Show** and **Quit**, and Quit is what actually ends the process.
+
+The first time the window disappears this way, a notification says the app is still
+running - once only, recorded as `trayNoticeShown` in the state file. Delete that key to
+see it again.
+
+Untick **Close button minimises to tray** in the widget's right-click menu to have the
+close button exit instead. On a desktop with no system tray the option is hidden entirely
+and close always exits, so the button can never become a dead end.
+
+## Starting with the computer
+
+The widget registers itself to launch at login the first time it runs, and the right-click
+menu has a **Start with the computer** toggle. Turning it off is remembered - it is not
+re-enabled at the next launch.
+
+There is no cross-platform autostart standard, so each OS uses its own conventional
+per-user mechanism. **None of them requires administrator rights**:
+
+| OS | Where the entry goes |
+| --- | --- |
+| Windows | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` |
+| macOS | `~/Library/LaunchAgents/com.tokenburnrate.plist` |
+| Linux | `~/.config/autostart/TokenBurnRate.desktop` (XDG spec, honours `XDG_CONFIG_HOME`) |
+
+`HKCU` is the current user's own registry hive; only the machine-wide `HKLM` equivalent
+needs elevation. Removing the entry is all it takes to undo, and turning the toggle off
+does exactly that.
+
+Autostart is offered only for a published build. Under `dotnet run` the running executable
+is the .NET host rather than the widget, so registering it would launch the wrong thing.
 
 ## Usage
 

@@ -6,9 +6,9 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Token_Burn_Rate.Models;
+using TokenBurnRate.Models;
 
-namespace Token_Burn_Rate.Services;
+namespace TokenBurnRate.Services;
 
 /// <summary>
 /// Reads the authoritative plan limits that Claude.ai itself displays.

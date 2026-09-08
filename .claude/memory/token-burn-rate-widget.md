@@ -1,6 +1,6 @@
 ---
 name: token-burn-rate-widget
-description: "Token-Burn-Rate runs on two machines (home personal, work org-assigned) and must adapt to both"
+description: "TokenBurnRate runs on two machines (home personal, work org-assigned) and must adapt to both"
 metadata: 
   node_type: memory
   type: project
@@ -8,7 +8,7 @@ metadata:
   modified: 2026-09-08T06:20:42.074Z
 ---
 
-Token-Burn-Rate is an Avalonia always-on-top widget showing live Claude Code and GitHub
+TokenBurnRate is an Avalonia always-on-top widget showing live Claude Code and GitHub
 Copilot usage, published as one self-contained executable per OS.
 
 The user runs it on **two machines** and it must work on both from the same binary:

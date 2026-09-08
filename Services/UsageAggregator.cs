@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Token_Burn_Rate.Models;
+using TokenBurnRate.Models;
 
-namespace Token_Burn_Rate.Services;
+namespace TokenBurnRate.Services;
 
 /// <summary>
 /// Turns raw usage records into windowed totals, and derives the bar denominators.
@@ -86,10 +86,4 @@ public static class UsageAggregator
         return result;
     }
 
-    /// <summary>Tokens per hour over the recent window, for the burn-rate readout.</summary>
-    public static double BurnRatePerHour(IReadOnlyList<UsageRecord> records, DateTimeOffset now)
-    {
-        var used = SumWindow(records, SessionWindow, now);
-        return used / SessionWindow.TotalHours;
-    }
 }

@@ -6,7 +6,7 @@ RIDS=(win-x64 linux-x64 osx-arm64 osx-x64)
 
 for rid in "${RIDS[@]}"; do
   echo "==> $rid"
-  dotnet publish Token-Burn-Rate.csproj -c Release -r "$rid" -o "publish/$rid" --nologo
+  dotnet publish TokenBurnRate.csproj -c Release -r "$rid" -o "publish/$rid" --nologo
 done
 
 echo

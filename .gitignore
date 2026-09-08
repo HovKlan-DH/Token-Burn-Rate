@@ -61,3 +61,6 @@ nunit-*.xml
 [Oo]bj/
 publish/
 .vs/
+
+# Crash reports written beside the executable
+*.crash.*.log

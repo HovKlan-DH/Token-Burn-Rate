@@ -1,7 +1,13 @@
-# Token Burn Rate
+# TokenBurnRate
 
 Avalonia always-on-top widget showing live Claude Code and GitHub Copilot usage,
 published as one self-contained executable per OS (win-x64, linux-x64, osx-arm64, osx-x64).
+
+## Working agreement
+
+**Never commit.** Make the changes and stop, leaving them in the working tree — the user runs
+`git commit` themselves and will ask on the occasions they want it done. Don't stage with
+`git add` unprompted either.
 
 ## Project notes
 

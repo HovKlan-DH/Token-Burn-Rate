@@ -3,7 +3,7 @@ using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Token_Burn_Rate.Services;
+namespace TokenBurnRate.Services;
 
 /// <summary>
 /// The app's own state, kept in a single JSON file named after the executable and sitting
@@ -26,10 +26,61 @@ public sealed class AppState
     [JsonPropertyName("pacing")]
     public PacingState? Pacing { get; set; }
 
+    /// <summary>Which panels the user has collapsed.</summary>
+    [JsonPropertyName("collapsed")]
+    public CollapsedState? Collapsed { get; set; }
+
+    /// <summary>Which panels the user has hidden outright via the context menu.</summary>
+    [JsonPropertyName("hidden")]
+    public HiddenState? Hidden { get; set; }
+
+    /// <summary>
+    /// Whether autostart has been configured at least once. Absent means the app has never
+    /// run before, which is what triggers enabling it by default.
+    /// </summary>
+    [JsonPropertyName("autostartInitialised")]
+    public bool? AutostartInitialised { get; set; }
+
+    /// <summary>
+    /// Whether the widget floats above other windows. Absent means never set, and the
+    /// widget defaults to pinned - being always visible is the point of it.
+    /// </summary>
+    [JsonPropertyName("pinned")]
+    public bool? Pinned { get; set; }
+
+    /// <summary>
+    /// Whether the close button minimises to the tray instead of exiting. Absent means
+    /// never set, and the widget defaults to minimising - a monitor is meant to stay
+    /// running, and quitting outright is the rarer intent.
+    /// </summary>
+    [JsonPropertyName("closeToTray")]
+    public bool? CloseToTray { get; set; }
+
+    /// <summary>
+    /// Whether the "still running in the tray" notice has been shown. It is a one-off: the
+    /// first minimise is the only one where the window vanishing is a surprise.
+    /// </summary>
+    [JsonPropertyName("trayNoticeShown")]
+    public bool? TrayNoticeShown { get; set; }
+
     public sealed class WindowState
     {
         [JsonPropertyName("x")] public int X { get; set; }
         [JsonPropertyName("y")] public int Y { get; set; }
+    }
+
+    public sealed class CollapsedState
+    {
+        [JsonPropertyName("claude")] public bool Claude { get; set; }
+        [JsonPropertyName("copilot")] public bool Copilot { get; set; }
+        [JsonPropertyName("pacing")] public bool Pacing { get; set; }
+    }
+
+    public sealed class HiddenState
+    {
+        [JsonPropertyName("claude")] public bool Claude { get; set; }
+        [JsonPropertyName("copilot")] public bool Copilot { get; set; }
+        [JsonPropertyName("pacing")] public bool Pacing { get; set; }
     }
 
     public sealed class PacingState

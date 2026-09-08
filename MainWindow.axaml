@@ -2,15 +2,16 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:vm="clr-namespace:Token_Burn_Rate.ViewModels"
-        xmlns:conv="clr-namespace:Token_Burn_Rate.Views"
+        xmlns:vm="clr-namespace:TokenBurnRate.ViewModels"
+        xmlns:conv="clr-namespace:TokenBurnRate.Views"
         mc:Ignorable="d"
-        x:Class="Token_Burn_Rate.MainWindow"
+        x:Class="TokenBurnRate.MainWindow"
         x:DataType="vm:MainViewModel"
-        Title="Token Burn Rate"
+        Title="TokenBurnRate"
+        Icon="avares://TokenBurnRate/Assets/icon.ico"
         Width="340" SizeToContent="Height"
         MinWidth="300" MaxWidth="340"
-        Topmost="True"
+        Topmost="{Binding Pinned}"
         CanResize="False"
         ShowInTaskbar="False"
         SystemDecorations="BorderOnly"
@@ -19,9 +20,24 @@
 
   <Window.Resources>
     <conv:DimOpacityConverter x:Key="DimOpacity"/>
+    <conv:ChevronConverter x:Key="Chevron"/>
+    <conv:HeaderTipConverter x:Key="HeaderTip"/>
   </Window.Resources>
 
   <Window.Styles>
+    <Style Selector="Button#RefreshButton:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#26282D"/>
+    </Style>
+    <Style Selector="TextBlock.countdown">
+      <Setter Property="FontSize" Value="10"/>
+      <Setter Property="Foreground" Value="#6B7079"/>
+      <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+    <Style Selector="TextBlock.chevron">
+      <Setter Property="FontSize" Value="9"/>
+      <Setter Property="Margin" Value="0,0,5,0"/>
+      <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
     <Style Selector="TextBlock.section">
       <Setter Property="FontSize" Value="11"/>
       <Setter Property="FontWeight" Value="SemiBold"/>
@@ -47,78 +63,156 @@
     </Style>
   </Window.Styles>
 
-  <Border Padding="14,12" CornerRadius="8">
-    <StackPanel Spacing="14">
+  <!-- Right-click anywhere to show or hide whole panels. The last visible panel cannot be
+       hidden, since this menu is the only way to bring one back. -->
+  <!-- Background makes the whole surface hit-testable: without it, right-click and drag
+       only work where there happens to be content. SizeAll marks the widget as draggable. -->
+  <Border Padding="14,12" CornerRadius="8" Background="#01000000" Cursor="SizeAll">
+    <Border.ContextMenu>
+      <ContextMenu>
+        <!-- A non-interactive caption; the items below it are the actual toggles. -->
+        <MenuItem Header="Show these topics:" IsEnabled="False"/>
+        <!-- A topic with no data at all is dropped from the menu rather than greyed out:
+             on a machine without Claude, an entry that can never do anything is noise. -->
+        <MenuItem Header="Claude" ToggleType="CheckBox"
+                  IsVisible="{Binding ClaudeAvailable}"
+                  IsChecked="{Binding !ClaudeHidden, Mode=TwoWay}"
+                  IsEnabled="{Binding CanHideClaude}"/>
+        <MenuItem Header="GitHub Copilot" ToggleType="CheckBox"
+                  IsVisible="{Binding CopilotAvailable}"
+                  IsChecked="{Binding !CopilotHidden, Mode=TwoWay}"
+                  IsEnabled="{Binding CanHideCopilot}"/>
+        <MenuItem Header="GitHub Copilot : My Pace" ToggleType="CheckBox"
+                  IsVisible="{Binding PacingAvailable}"
+                  IsChecked="{Binding !PacingHidden, Mode=TwoWay}"
+                  IsEnabled="{Binding CanHidePacing}"/>
+        <Separator/>
+        <MenuItem Header="Start with the computer" ToggleType="CheckBox"
+                  IsChecked="{Binding AutostartEnabled, Mode=TwoWay}"
+                  IsEnabled="{Binding AutostartSupported}"
+                  ToolTip.Tip="Launch automatically when you log in"/>
+        <!-- Hidden outright where no tray exists, rather than offering a choice that would
+             leave the close button unable to do anything. -->
+        <MenuItem Header="Close button minimises to tray" ToggleType="CheckBox"
+                  IsVisible="{Binding TraySupported}"
+                  IsChecked="{Binding CloseToTray, Mode=TwoWay}"
+                  ToolTip.Tip="Keep running in the notification area instead of exiting"/>
+        <Separator/>
+        <MenuItem Name="ProjectPageItem" Header="Project page on GitHub"
+                  ToolTip.Tip="https://github.com/HovKlan-DH/TokenBurnRate"/>
+      </ContextMenu>
+    </Border.ContextMenu>
+    <StackPanel Spacing="8">
 
       <!-- Header: doubles as the drag handle for a frameless widget -->
-      <Grid ColumnDefinitions="*,Auto" Name="DragHandle">
-        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
-          <Ellipse Width="7" Height="7" Fill="#3FB950" VerticalAlignment="Center"/>
-          <TextBlock Text="TOKEN BURN RATE" Classes="section" VerticalAlignment="Center"/>
+      <!-- Background is required for the empty parts of the row to be hit-testable;
+           without it there is nothing to grab now that the title text is gone. -->
+      <Grid ColumnDefinitions="*,Auto" Name="DragHandle" Background="Transparent"
+            Cursor="SizeAll">
+        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+          <!-- Left edge matches the section chevrons below. The dot is narrower than a
+               chevron glyph, so it carries extra right margin to put the text that follows
+               on the same x as the headers. -->
+          <Ellipse Width="7" Height="7" Fill="#3FB950" VerticalAlignment="Center"
+                   Margin="0,1,3,0"/>
+          <!-- The countdown stands in for the app name. Both services refresh on one timer,
+               so there is a single figure; the time and the icon form one button, so either
+               can be clicked to refresh. -->
+          <Button Name="RefreshButton" Padding="0,2,5,2" Background="Transparent"
+                  BorderThickness="0" CornerRadius="4" Cursor="Hand"
+                  ToolTip.Tip="Time until the next automatic refresh - click to refresh now">
+            <!-- Centred on a shared baseline: the glyph's optical centre sits lower than
+                 the digits', so it is nudged up to line the two up. -->
+            <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+              <TextBlock Text="{Binding Countdown}" Classes="countdown"
+                         VerticalAlignment="Center"/>
+              <TextBlock Text="⟳" FontSize="12" Foreground="#8A8F98"
+                         VerticalAlignment="Center" Margin="0,-2,0,0"/>
+            </StackPanel>
+          </Button>
         </StackPanel>
         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
-          <TextBlock Text="{Binding BurnRateText}" Classes="detail"
-                     VerticalAlignment="Center" MaxWidth="90"
-                     TextTrimming="CharacterEllipsis"/>
-          <Button Name="RefreshButton" Content="⟳" Padding="6,1" FontSize="11"
+          <Button Name="PinButton" Padding="5,1" FontSize="11"
                   Background="Transparent" Foreground="#8A8F98" BorderThickness="0"
-                  ToolTip.Tip="Refresh now"/>
+                  Cursor="Hand" ToolTip.Tip="{Binding PinTooltip}">
+            <!-- The pin glyph renders taller than the close cross, so its centre sits
+                 lower; the negative bottom margin lifts it onto the same line. -->
+            <TextBlock Text="{Binding PinGlyph}" Opacity="{Binding PinOpacity}"
+                       VerticalAlignment="Center" Margin="0,0,0,3"/>
+          </Button>
           <Button Name="CloseButton" Content="✕" Padding="6,1" FontSize="10"
                   Background="Transparent" Foreground="#8A8F98" BorderThickness="0"
-                  ToolTip.Tip="Close"/>
+                  Cursor="Hand" ToolTip.Tip="Close"/>
         </StackPanel>
       </Grid>
 
       <!-- Claude: hidden entirely when the service is not present on this machine -->
-      <StackPanel Spacing="7" IsVisible="{Binding ClaudeVisible}">
-        <Grid ColumnDefinitions="Auto,*">
-          <TextBlock Grid.Column="0" Text="CLAUDE" Classes="section" Foreground="#D97757"/>
-          <TextBlock Grid.Column="1" Text="{Binding ClaudeSubtitle}" Classes="subtitle"
+      <StackPanel Spacing="6" IsVisible="{Binding ClaudeVisible}">
+        <!-- The last panel standing cannot be collapsed, so it drops the chevron and the
+             click affordance rather than offering a toggle that does nothing. -->
+        <Grid ColumnDefinitions="Auto,Auto,*" Name="ClaudeHeader" Background="Transparent"
+              ToolTip.Tip="{Binding ClaudeSolo, Converter={StaticResource HeaderTip}}">
+          <TextBlock Grid.Column="0" Classes="chevron" Foreground="#D97757"
+                     IsVisible="{Binding !ClaudeSolo}"
+                     Text="{Binding ClaudeExpanded, Converter={StaticResource Chevron}}"/>
+          <TextBlock Grid.Column="1" Text="CLAUDE" Classes="section" Foreground="#D97757"/>
+          <TextBlock Grid.Column="2" Text="{Binding ClaudeSubtitle}" Classes="subtitle"
                      HorizontalAlignment="Right" VerticalAlignment="Center" Margin="8,0,0,0"
                      MaxWidth="200"/>
         </Grid>
-        <ItemsControl ItemsSource="{Binding ClaudeBars}">
+        <ItemsControl ItemsSource="{Binding ClaudeBars}" IsVisible="{Binding ClaudeExpanded}">
           <ItemsControl.ItemTemplate>
             <DataTemplate x:DataType="vm:BarViewModel">
-              <Grid Margin="0,0,0,7" RowDefinitions="Auto,Auto,Auto">
-                <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
-                  <TextBlock Grid.Column="0" Text="{Binding Label}" Classes="barlabel"/>
-                  <TextBlock Grid.Column="1" Text="{Binding ValueText}" Classes="barvalue"/>
-                </Grid>
-                <conv:UsageBar Grid.Row="1" Height="5" Margin="0,3,0,0"
+              <!-- Fixed label and value columns keep every bar starting and ending at the
+                   same x, and bottom alignment lines the text up with the bar band rather
+                   than with the caption above it. -->
+              <Grid Margin="0,0,0,6" ColumnDefinitions="Auto,*,64">
+                <TextBlock Grid.Column="0" Text="{Binding Label}" Classes="barlabel"
+                           VerticalAlignment="Bottom" Margin="0,0,8,-3"
+                           Width="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).LabelWidth}"/>
+                <conv:UsageBar Grid.Column="1" Height="18" VerticalAlignment="Bottom"
                                Fraction="{Binding Fraction}"
-                               Track="#26282D" Fill="#D97757"/>
-                <TextBlock Grid.Row="2" Text="{Binding DetailText}" Classes="detail" Margin="0,2,0,0"/>
+                               Caption="{Binding DetailText}"
+                               Track="#3A3D44" CaptionBrush="#6B7079" Fill="#D97757"/>
+                <TextBlock Grid.Column="2" Text="{Binding ValueText}" Classes="barvalue"
+                           VerticalAlignment="Bottom" Margin="8,0,0,-4"
+                           HorizontalAlignment="Right"/>
               </Grid>
             </DataTemplate>
           </ItemsControl.ItemTemplate>
         </ItemsControl>
       </StackPanel>
 
-      <Border Height="1" Background="#26282D"
-              IsVisible="{Binding ClaudeVisible}"/>
-
       <!-- Copilot -->
-      <StackPanel Spacing="7" IsVisible="{Binding CopilotVisible}">
-        <Grid ColumnDefinitions="Auto,*">
-          <TextBlock Grid.Column="0" Text="GITHUB COPILOT" Classes="section" Foreground="#58A6FF"/>
-          <TextBlock Grid.Column="1" Text="{Binding CopilotSubtitle}" Classes="subtitle"
+      <StackPanel Spacing="6" IsVisible="{Binding CopilotVisible}">
+        <Grid ColumnDefinitions="Auto,Auto,*" Name="CopilotHeader" Background="Transparent"
+              ToolTip.Tip="{Binding CopilotSolo, Converter={StaticResource HeaderTip}}">
+          <TextBlock Grid.Column="0" Classes="chevron" Foreground="#58A6FF"
+                     IsVisible="{Binding !CopilotSolo}"
+                     Text="{Binding CopilotExpanded, Converter={StaticResource Chevron}}"/>
+          <TextBlock Grid.Column="1" Text="GITHUB COPILOT" Classes="section" Foreground="#58A6FF"/>
+          <TextBlock Grid.Column="2" Text="{Binding CopilotSubtitle}" Classes="subtitle"
                      HorizontalAlignment="Right" VerticalAlignment="Center" Margin="8,0,0,0"
                      MaxWidth="200"/>
         </Grid>
-        <ItemsControl ItemsSource="{Binding CopilotBars}">
+        <ItemsControl ItemsSource="{Binding CopilotBars}" IsVisible="{Binding CopilotExpanded}">
           <ItemsControl.ItemTemplate>
             <DataTemplate x:DataType="vm:BarViewModel">
-              <Grid Margin="0,0,0,7" RowDefinitions="Auto,Auto,Auto"
+              <!-- Fixed label and value columns keep every bar starting and ending at the
+                   same x, and bottom alignment lines the text up with the bar band rather
+                   than with the caption above it. -->
+              <Grid Margin="0,0,0,6" ColumnDefinitions="Auto,*,64"
                     Opacity="{Binding IsEnabled, Converter={StaticResource DimOpacity}}">
-                <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
-                  <TextBlock Grid.Column="0" Text="{Binding Label}" Classes="barlabel"/>
-                  <TextBlock Grid.Column="1" Text="{Binding ValueText}" Classes="barvalue"/>
-                </Grid>
-                <conv:UsageBar Grid.Row="1" Height="5" Margin="0,3,0,0"
+                <TextBlock Grid.Column="0" Text="{Binding Label}" Classes="barlabel"
+                           VerticalAlignment="Bottom" Margin="0,0,8,-3"
+                           Width="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).LabelWidth}"/>
+                <conv:UsageBar Grid.Column="1" Height="18" VerticalAlignment="Bottom"
                                Fraction="{Binding Fraction}"
-                               Track="#26282D" Fill="#58A6FF"/>
-                <TextBlock Grid.Row="2" Text="{Binding DetailText}" Classes="detail" Margin="0,2,0,0"/>
+                               Caption="{Binding DetailText}"
+                               Track="#3A3D44" CaptionBrush="#6B7079" Fill="#58A6FF"/>
+                <TextBlock Grid.Column="2" Text="{Binding ValueText}" Classes="barvalue"
+                           VerticalAlignment="Bottom" Margin="8,0,0,-4"
+                           HorizontalAlignment="Right"/>
               </Grid>
             </DataTemplate>
           </ItemsControl.ItemTemplate>
@@ -133,39 +227,48 @@
                 HorizontalContentAlignment="Center"
                 Padding="0,5" FontSize="10"
                 Background="#1F6FEB" Foreground="White"
-                BorderThickness="0" CornerRadius="4"/>
+                BorderThickness="0" CornerRadius="4" Cursor="Hand"/>
       </StackPanel>
 
-      <Border Height="1" Background="#26282D"
-              IsVisible="{Binding PacingVisible}"/>
-
       <!-- The user's own pacing view, derived from the credit balance above. -->
-      <StackPanel Spacing="7" IsVisible="{Binding PacingVisible}">
+      <StackPanel Spacing="6" IsVisible="{Binding PacingVisible}">
         <!-- The full name plus its subtitle cannot share one line at a readable size, so
              the subtitle sits underneath rather than being truncated. -->
-        <StackPanel Spacing="2">
-          <TextBlock Text="GITHUB COPILOT .: MY PACE" Classes="section" Foreground="#3FB950"/>
-          <TextBlock Text="{Binding PacingSubtitle}" Classes="subtitle"/>
+        <StackPanel Spacing="2" Name="PacingHeader" Background="Transparent"
+                    ToolTip.Tip="{Binding PacingSolo, Converter={StaticResource HeaderTip}}">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Classes="chevron" Foreground="#3FB950"
+                       IsVisible="{Binding !PacingSolo}"
+                       Text="{Binding PacingExpanded, Converter={StaticResource Chevron}}"/>
+            <TextBlock Text="GITHUB COPILOT : MY PACE" Classes="section" Foreground="#3FB950"/>
+          </StackPanel>
+          <TextBlock Text="{Binding PacingSubtitle}" Classes="subtitle"
+                     IsVisible="{Binding PacingExpanded}"/>
         </StackPanel>
-        <ItemsControl ItemsSource="{Binding PacingBars}">
+        <ItemsControl ItemsSource="{Binding PacingBars}" IsVisible="{Binding PacingExpanded}">
           <ItemsControl.ItemTemplate>
             <DataTemplate x:DataType="vm:BarViewModel">
-              <Grid Margin="0,0,0,7" RowDefinitions="Auto,Auto,Auto">
-                <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
-                  <TextBlock Grid.Column="0" Text="{Binding Label}" Classes="barlabel"/>
-                  <TextBlock Grid.Column="1" Text="{Binding ValueText}" Classes="barvalue"/>
-                </Grid>
-                <conv:UsageBar Grid.Row="1" Height="5" Margin="0,3,0,0"
+              <!-- Fixed label and value columns keep every bar starting and ending at the
+                   same x, and bottom alignment lines the text up with the bar band rather
+                   than with the caption above it. -->
+              <Grid Margin="0,0,0,6" ColumnDefinitions="Auto,*,64">
+                <TextBlock Grid.Column="0" Text="{Binding Label}" Classes="barlabel"
+                           VerticalAlignment="Bottom" Margin="0,0,8,-3"
+                           Width="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).LabelWidth}"/>
+                <conv:UsageBar Grid.Column="1" Height="18" VerticalAlignment="Bottom"
                                Fraction="{Binding Fraction}"
-                               Track="#26282D" Fill="#3FB950"/>
-                <TextBlock Grid.Row="2" Text="{Binding DetailText}" Classes="detail" Margin="0,2,0,0"/>
+                               Caption="{Binding DetailText}"
+                               Track="#3A3D44" CaptionBrush="#6B7079" Fill="#3FB950"/>
+                <TextBlock Grid.Column="2" Text="{Binding ValueText}" Classes="barvalue"
+                           VerticalAlignment="Bottom" Margin="8,0,0,-4"
+                           HorizontalAlignment="Right"/>
               </Grid>
             </DataTemplate>
           </ItemsControl.ItemTemplate>
         </ItemsControl>
       </StackPanel>
 
-      <TextBlock Text="{Binding StatusText}" Classes="detail" HorizontalAlignment="Center"/>
+
     </StackPanel>
   </Border>
 </Window>

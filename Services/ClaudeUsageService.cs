@@ -6,9 +6,9 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Token_Burn_Rate.Models;
+using TokenBurnRate.Models;
 
-namespace Token_Burn_Rate.Services;
+namespace TokenBurnRate.Services;
 
 /// <summary>
 /// Reads Claude Code's local JSONL transcripts and aggregates token usage.

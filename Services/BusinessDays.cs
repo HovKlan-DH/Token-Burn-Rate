@@ -1,6 +1,6 @@
 using System;
 
-namespace Token_Burn_Rate.Services;
+namespace TokenBurnRate.Services;
 
 /// <summary>
 /// Business-day arithmetic for pacing credit spend, where a business day is Monday-Friday.

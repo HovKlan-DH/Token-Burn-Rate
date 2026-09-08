@@ -1,7 +1,7 @@
 using System;
-using Token_Burn_Rate.Models;
+using TokenBurnRate.Models;
 
-namespace Token_Burn_Rate.Services;
+namespace TokenBurnRate.Services;
 
 /// <summary>
 /// Derives a "how much can I spend today" view from GitHub's point-in-time credit balance.

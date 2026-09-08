@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace Token_Burn_Rate.Models;
+namespace TokenBurnRate.Models;
 
 /// <summary>A single billed assistant message pulled from a Claude Code transcript.</summary>
 public readonly record struct UsageRecord(

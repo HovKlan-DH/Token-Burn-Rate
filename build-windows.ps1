@@ -5,7 +5,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Push-Location $root
 try {
-    dotnet publish Token-Burn-Rate.csproj -c Release -r win-x64 -o publish\win-x64
+    dotnet publish TokenBurnRate.csproj -c Release -r win-x64 -o publish\win-x64
     if ($LASTEXITCODE -ne 0) { throw "publish failed with exit code $LASTEXITCODE" }
 
     $exe = Join-Path $root 'publish\win-x64\TokenBurnRate.exe'

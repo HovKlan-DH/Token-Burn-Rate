@@ -7,9 +7,9 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Token_Burn_Rate.Models;
+using TokenBurnRate.Models;
 
-namespace Token_Burn_Rate.Services;
+namespace TokenBurnRate.Services;
 
 /// <summary>
 /// Reads live Copilot quota from GitHub's copilot_internal/user endpoint.
