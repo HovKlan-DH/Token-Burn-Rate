@@ -1,0 +1,130 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:Token_Burn_Rate.ViewModels"
+        xmlns:conv="clr-namespace:Token_Burn_Rate.Views"
+        mc:Ignorable="d"
+        x:Class="Token_Burn_Rate.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Title="Token Burn Rate"
+        Width="340" SizeToContent="Height"
+        MinWidth="300" MaxWidth="340"
+        Topmost="True"
+        CanResize="False"
+        ShowInTaskbar="False"
+        SystemDecorations="BorderOnly"
+        TransparencyLevelHint="AcrylicBlur"
+        Background="#F21A1B1E">
+
+  <Window.Resources>
+    <conv:DimOpacityConverter x:Key="DimOpacity"/>
+  </Window.Resources>
+
+  <Window.Styles>
+    <Style Selector="TextBlock.section">
+      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Foreground" Value="#FFFFFF"/>
+    </Style>
+    <Style Selector="TextBlock.subtitle">
+      <Setter Property="FontSize" Value="10"/>
+      <Setter Property="Foreground" Value="#8A8F98"/>
+      <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+    </Style>
+    <Style Selector="TextBlock.barlabel">
+      <Setter Property="FontSize" Value="9"/>
+      <Setter Property="Foreground" Value="#8A8F98"/>
+    </Style>
+    <Style Selector="TextBlock.barvalue">
+      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Foreground" Value="#E8EAED"/>
+    </Style>
+    <Style Selector="TextBlock.detail">
+      <Setter Property="FontSize" Value="9"/>
+      <Setter Property="Foreground" Value="#6B7079"/>
+    </Style>
+  </Window.Styles>
+
+  <Border Padding="14,12" CornerRadius="8">
+    <StackPanel Spacing="14">
+
+      <!-- Header: doubles as the drag handle for a frameless widget -->
+      <Grid ColumnDefinitions="*,Auto" Name="DragHandle">
+        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
+          <Ellipse Width="7" Height="7" Fill="#3FB950" VerticalAlignment="Center"/>
+          <TextBlock Text="TOKEN BURN RATE" Classes="section" VerticalAlignment="Center"/>
+        </StackPanel>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+          <TextBlock Text="{Binding BurnRateText}" Classes="detail"
+                     VerticalAlignment="Center" MaxWidth="90"
+                     TextTrimming="CharacterEllipsis"/>
+          <Button Name="RefreshButton" Content="⟳" Padding="6,1" FontSize="11"
+                  Background="Transparent" Foreground="#8A8F98" BorderThickness="0"
+                  ToolTip.Tip="Refresh now"/>
+          <Button Name="CloseButton" Content="✕" Padding="6,1" FontSize="10"
+                  Background="Transparent" Foreground="#8A8F98" BorderThickness="0"
+                  ToolTip.Tip="Close"/>
+        </StackPanel>
+      </Grid>
+
+      <!-- Claude -->
+      <StackPanel Spacing="7">
+        <Grid ColumnDefinitions="Auto,*">
+          <TextBlock Grid.Column="0" Text="CLAUDE" Classes="section" Foreground="#D97757"/>
+          <TextBlock Grid.Column="1" Text="{Binding ClaudeSubtitle}" Classes="subtitle"
+                     HorizontalAlignment="Right" VerticalAlignment="Center" Margin="8,0,0,0"
+                     MaxWidth="200"/>
+        </Grid>
+        <ItemsControl ItemsSource="{Binding ClaudeBars}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:BarViewModel">
+              <Grid Margin="0,0,0,7" RowDefinitions="Auto,Auto,Auto">
+                <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+                  <TextBlock Grid.Column="0" Text="{Binding Label}" Classes="barlabel"/>
+                  <TextBlock Grid.Column="1" Text="{Binding ValueText}" Classes="barvalue"/>
+                </Grid>
+                <conv:UsageBar Grid.Row="1" Height="5" Margin="0,3,0,0"
+                               Fraction="{Binding Fraction}"
+                               Track="#26282D" Fill="#D97757"/>
+                <TextBlock Grid.Row="2" Text="{Binding DetailText}" Classes="detail" Margin="0,2,0,0"/>
+              </Grid>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </StackPanel>
+
+      <Border Height="1" Background="#26282D"/>
+
+      <!-- Copilot -->
+      <StackPanel Spacing="7">
+        <Grid ColumnDefinitions="Auto,*">
+          <TextBlock Grid.Column="0" Text="GITHUB COPILOT" Classes="section" Foreground="#58A6FF"/>
+          <TextBlock Grid.Column="1" Text="{Binding CopilotSubtitle}" Classes="subtitle"
+                     HorizontalAlignment="Right" VerticalAlignment="Center" Margin="8,0,0,0"
+                     MaxWidth="200"/>
+        </Grid>
+        <ItemsControl ItemsSource="{Binding CopilotBars}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:BarViewModel">
+              <Grid Margin="0,0,0,7" RowDefinitions="Auto,Auto,Auto"
+                    Opacity="{Binding IsEnabled, Converter={StaticResource DimOpacity}}">
+                <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+                  <TextBlock Grid.Column="0" Text="{Binding Label}" Classes="barlabel"/>
+                  <TextBlock Grid.Column="1" Text="{Binding ValueText}" Classes="barvalue"/>
+                </Grid>
+                <conv:UsageBar Grid.Row="1" Height="5" Margin="0,3,0,0"
+                               Fraction="{Binding Fraction}"
+                               Track="#26282D" Fill="#58A6FF"/>
+                <TextBlock Grid.Row="2" Text="{Binding DetailText}" Classes="detail" Margin="0,2,0,0"/>
+              </Grid>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </StackPanel>
+
+      <TextBlock Text="{Binding StatusText}" Classes="detail" HorizontalAlignment="Center"/>
+    </StackPanel>
+  </Border>
+</Window>

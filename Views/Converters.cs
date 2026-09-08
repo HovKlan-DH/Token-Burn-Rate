@@ -1,0 +1,15 @@
+using System;
+using System.Globalization;
+using Avalonia.Data.Converters;
+
+namespace Token_Burn_Rate.Views;
+
+/// <summary>Dims a row that has no data (e.g. a quota not included in the plan).</summary>
+public sealed class DimOpacityConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => value is bool b && b ? 1.0 : 0.4;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => throw new NotSupportedException();
+}
