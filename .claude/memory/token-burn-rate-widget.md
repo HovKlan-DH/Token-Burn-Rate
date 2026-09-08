@@ -24,6 +24,9 @@ The user runs it on **two machines** and it must work on both from the same bina
 The work machine also has M365 Copilot on a separate pool — deliberately not shown, see
 [[m365-copilot-no-usage-api]].
 
+Claude bars come from Anthropic's own usage endpoint, not from transcript math — see
+[[claude-usage-api]].
+
 **Why:** The home machine's free personal plan made GitHub Copilot and "Copilot" look like
 one product; they are not. Never generalise the account shape from whichever machine is
 being used to develop on.
