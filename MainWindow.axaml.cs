@@ -44,7 +44,7 @@ public partial class MainWindow : Window
             handle.PointerPressed += OnDragHandlePressed;
 
         if (this.FindControl<Button>("RefreshButton") is { } refresh)
-            refresh.Click += async (_, _) => await _vm.RefreshAsync(_cts.Token);
+            refresh.Click += (_, _) => RunSafely(() => _vm.RefreshAsync(_cts.Token), "refresh button");
 
         if (this.FindControl<Button>("CloseButton") is { } close)
             close.Click += (_, _) => Close();
@@ -56,20 +56,23 @@ public partial class MainWindow : Window
             projectPage.Click += (_, _) => _vm.OpenProjectPage();
 
         if (this.FindControl<Button>("SignInButton") is { } signIn)
-            signIn.Click += async (_, _) => await _vm.SignInToGitHubAsync(_cts.Token);
+            signIn.Click += (_, _) => RunSafely(() => _vm.SignInToGitHubAsync(_cts.Token), "sign-in button");
 
         // Clicking a section header collapses or expands that panel.
         HookHeader("ClaudeHeader", () => _vm.ClaudeSolo, () => _vm.ClaudeCollapsed = !_vm.ClaudeCollapsed);
         HookHeader("CopilotHeader", () => _vm.CopilotSolo, () => _vm.CopilotCollapsed = !_vm.CopilotCollapsed);
         HookHeader("PacingHeader", () => _vm.PacingSolo, () => _vm.PacingCollapsed = !_vm.PacingCollapsed);
 
-        _vm.LoadCollapsedState();
+        // Tray first: LoadCollapsedState raises CloseToTray, whose getter is gated on
+        // TraySupported. Loading before the tray exists would publish that preference as
+        // false whatever the file said, and the menu's two-way binding would latch it.
         SetUpTray();
+        _vm.LoadCollapsedState();
 
         // Copilot's quota is a remote call and Claude's parse is incremental, so a 60s
         // cadence keeps the display live without hammering either source.
         _timer = new DispatcherTimer { Interval = MainViewModel.RefreshInterval };
-        _timer.Tick += async (_, _) => await _vm.RefreshAsync(_cts.Token);
+        _timer.Tick += (_, _) => RunSafely(() => _vm.RefreshAsync(_cts.Token), "refresh timer");
         _timer.Start();
 
         // Separate one-second tick so the countdowns visibly run down between refreshes.
@@ -77,11 +80,11 @@ public partial class MainWindow : Window
         _countdownTimer.Tick += (_, _) => _vm.TickCountdowns();
         _countdownTimer.Start();
 
-        Opened += async (_, _) =>
+        Opened += (_, _) =>
         {
             ApplyCursors();     // the visual tree is only complete once the window is open
             _vm.TickCountdowns();
-            await _vm.RefreshAsync(_cts.Token);
+            RunSafely(() => _vm.RefreshAsync(_cts.Token), "initial refresh");
         };
     }
 
@@ -205,7 +208,8 @@ public partial class MainWindow : Window
     /// every close would be nagging.
     ///
     /// The flag is only set once the balloon actually appeared, so a failed notification
-    /// is retried on the next minimise rather than being silently spent.
+    /// is retried on the next minimise rather than being silently spent. The retry costs
+    /// nothing: TrayNotifier reuses the window and icon it created the first time.
     /// </summary>
     private void NotifyMinimisedToTrayOnce()
     {
@@ -219,12 +223,46 @@ public partial class MainWindow : Window
         if (shown) Services.AppState.Update(a => a.TrayNoticeShown = true);
     }
 
-    /// <summary>Brings the widget back from the tray and puts it in front.</summary>
+    /// <summary>
+    /// Brings the widget back from the tray and puts it in front. The refresh timers were
+    /// stopped on the way in, so they restart here and a refresh runs immediately: whatever
+    /// was on screen when it was hidden is stale by definition.
+    /// </summary>
     private void RestoreFromTray()
     {
         Show();
         WindowState = WindowState.Normal;
         Activate();
+
+        if (!_timer.IsEnabled)
+        {
+            _timer.Start();
+            _countdownTimer.Start();
+            RunSafely(() => _vm.RefreshAsync(_cts.Token), "restore from tray");
+        }
+    }
+
+    /// <summary>
+    /// Runs a task from an event handler without leaving it unobserved.
+    ///
+    /// An `async void` handler discards its Task, so anything escaping the callee surfaces
+    /// only as an unobserved exception at the next GC - by which point the user has seen a
+    /// button do nothing with no explanation. This awaits it and records the failure.
+    /// </summary>
+    private static async void RunSafely(Func<Task> work, string context)
+    {
+        try
+        {
+            await work();
+        }
+        catch (OperationCanceledException)
+        {
+            // Shutdown cancelled the token: the expected way for this to end.
+        }
+        catch (Exception ex)
+        {
+            Services.CrashLog.Record(ex, context);
+        }
     }
 
     /// <summary>Closes for real, bypassing the minimise-to-tray interception.</summary>
@@ -244,6 +282,13 @@ public partial class MainWindow : Window
             SavePosition();
             e.Cancel = true;
             Hide();
+
+            // Nothing can read the display while it is in the tray, so polling both APIs
+            // every 60s would be pure waste - and over a working day that is hundreds of
+            // needless round trips per service. RestoreFromTray refreshes on the way back.
+            _timer.Stop();
+            _countdownTimer.Stop();
+
             NotifyMinimisedToTrayOnce();
             return;
         }
@@ -265,9 +310,11 @@ public partial class MainWindow : Window
         _cts.Cancel();
 
         // Explicitly disposed: a tray icon can otherwise linger in the notification area
-        // until the user hovers over it.
+        // until the user hovers over it. The notifier's own hidden icon needs the same,
+        // plus the window and icon handles it holds open to keep its balloon alive.
         _tray?.Dispose();
         _tray = null;
+        Services.TrayNotifier.Cleanup();
 
         base.OnClosing(e);
 

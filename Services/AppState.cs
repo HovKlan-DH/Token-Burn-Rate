@@ -195,12 +195,61 @@ public sealed class AppState
 
             try
             {
-                File.WriteAllText(Path, JsonSerializer.Serialize(state, Options));
+                WriteAtomic(JsonSerializer.Serialize(state, Options));
             }
             catch (Exception)
             {
                 // Best effort: an unwritable file loses tracking, never the running app.
             }
+        }
+    }
+
+    /// <summary>
+    /// Writes via a temporary file and an atomic replace, so the state file is never left
+    /// half-written.
+    ///
+    /// This matters more than it looks: the app now sits in the tray and is killed outright
+    /// at logoff. A plain WriteAllText truncates first, so a kill in that window would
+    /// leave unparseable JSON, and Load() answers that with a blank state - silently
+    /// discarding the pacing opening balances, which cannot be reconstructed from anywhere.
+    /// </summary>
+    private static void WriteAtomic(string json)
+    {
+        var dir = System.IO.Path.GetDirectoryName(Path);
+        if (string.IsNullOrWhiteSpace(dir)) { File.WriteAllText(Path, json); return; }
+
+        // Same directory as the target: File.Replace and a rename are only atomic within
+        // one volume, and the temp folder may well be on another.
+        var temp = System.IO.Path.Combine(dir, $".tbr-{Guid.NewGuid():N}.tmp");
+
+        try
+        {
+            File.WriteAllText(temp, json);
+
+            if (File.Exists(Path))
+            {
+                // No backup file: the temp copy is already complete on disk, so there is
+                // nothing left to recover from a third one.
+                File.Replace(temp, Path, destinationBackupFileName: null);
+            }
+            else
+            {
+                File.Move(temp, Path);
+            }
+        }
+        catch (Exception)
+        {
+            // Replace fails on some filesystems - notably a few network shares and FUSE
+            // mounts. A direct write gives up atomicity but keeps the update, which is the
+            // better trade on a path this rare. If that fails too the caller's catch takes
+            // over and the update is dropped.
+            File.WriteAllText(Path, json);
+        }
+        finally
+        {
+            // A crash between write and replace leaves the temp file behind; clear it so
+            // they cannot accumulate beside the executable.
+            try { if (File.Exists(temp)) File.Delete(temp); } catch (Exception) { }
         }
     }
 }

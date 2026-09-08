@@ -71,6 +71,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private bool _copilotHidden;
     private bool _pacingHidden;
     private bool _autostartEnabled;
+
+    /// <summary>
+    /// Set once the user has toggled autostart themselves, so the startup probe - which
+    /// runs off-thread and may land afterwards - cannot overwrite their choice.
+    /// </summary>
+    private bool _autostartTouched;
     private bool _pinned = true;
     private bool _closeToTray = true;
     private bool _traySupported;
@@ -276,7 +282,15 @@ public sealed class MainViewModel : INotifyPropertyChanged
         get => _closeToTray && TraySupported;
         set
         {
-            if (!TraySupported || !Set(ref _closeToTray, value)) return;
+            // Compared against what the getter reports, not against the raw field. Those
+            // differ whenever there is no tray, and comparing the field would let a
+            // write-back of the gated value be swallowed as "no change" while the stored
+            // preference quietly said the opposite.
+            if (CloseToTray == value) return;
+            if (!TraySupported) return;     // nothing to minimise to; the menu item is hidden
+
+            _closeToTray = value;
+            OnPropertyChanged(nameof(CloseToTray));
             AppState.Update(a => a.CloseToTray = value);
         }
     }
@@ -316,6 +330,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
         set
         {
             if (_autostartEnabled == value) return;
+
+            // Whatever the startup probe comes back with, the user has now said otherwise.
+            _autostartTouched = true;
 
             // Only claim the new state if the platform actually accepted it, so a failed
             // write leaves the menu showing the truth rather than a lie.
@@ -364,7 +381,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         if (IsRefreshing) return;
         IsRefreshing = true;
-        _nextRefresh = DateTimeOffset.UtcNow + RefreshInterval;
         try
         {
             var claudeTask = RefreshClaudeAsync(ct);
@@ -381,6 +397,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
         finally
         {
+            // Counted from when the work finished, not when it started. A refresh that
+            // overruns the interval would otherwise leave the countdown sitting at zero
+            // while the timer tick it collided with was turned away by the guard above -
+            // the display promising 60 seconds and taking up to 120.
+            _nextRefresh = DateTimeOffset.UtcNow + RefreshInterval;
             IsRefreshing = false;
         }
     }
@@ -641,13 +662,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
         if (state.Hidden is { } h)
         {
+            _claudeHidden = h.Claude;
+            _copilotHidden = h.Copilot;
+            _pacingHidden = h.Pacing;
+
             // Guard against a file that hides everything, which would leave no way back.
-            if (!(h.Claude && h.Copilot && h.Pacing))
-            {
-                _claudeHidden = h.Claude;
-                _copilotHidden = h.Copilot;
-                _pacingHidden = h.Pacing;
-            }
+            // Only the last panel is forced open: discarding all three flags would throw
+            // away two perfectly legal choices to correct the one that is not.
+            if (_claudeHidden && _copilotHidden && _pacingHidden) _claudeHidden = false;
 
             OnPropertyChanged(nameof(ClaudeHidden));
             OnPropertyChanged(nameof(CopilotHidden));
@@ -688,14 +710,35 @@ public sealed class MainViewModel : INotifyPropertyChanged
             return;
         }
 
-        if (state.AutostartInitialised is not true)
-        {
-            AutostartService.Set(true);
-            AppState.Update(a => a.AutostartInitialised = true);
-        }
+        var firstRun = state.AutostartInitialised is not true;
 
-        _autostartEnabled = AutostartService.IsEnabled();
-        OnPropertyChanged(nameof(AutostartEnabled));
+        // Registry, plist and desktop-file writes are all disk or hive I/O, and the two
+        // AppState round-trips behind them are more of the same. This runs from the window
+        // constructor, so doing it inline holds the window off the screen for as long as
+        // the profile takes to answer - seconds, on a roaming or network-backed one.
+        Task.Run(() =>
+        {
+            if (firstRun)
+            {
+                AutostartService.Set(true);
+                AppState.Update(a => a.AutostartInitialised = true);
+            }
+
+            var enabled = AutostartService.IsEnabled();
+
+            // Back to the UI thread: this sets a bound property, and the menu may already
+            // be on screen by the time the probe finishes.
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                // The menu is live while this runs, so the user may have toggled autostart
+                // already. Their choice is newer than this probe and wins.
+                if (_autostartTouched) return;
+
+                _autostartEnabled = enabled;
+                OnPropertyChanged(nameof(AutostartEnabled));
+            });
+        });
+
         OnPropertyChanged(nameof(AutostartSupported));
     }
 
@@ -743,10 +786,42 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
     }
 
+    /// <summary>
+    /// Widths already measured, keyed by label.
+    ///
+    /// OnBarsChanged runs several times per refresh - every Available and Hidden setter
+    /// reaches it through VisibilityChanged - while the labels themselves come from a fixed
+    /// handful (SESSION, WEEK, COMPLETIONS, CHAT, PREMIUM, DAY, MONTH). Without this, each
+    /// pass re-shapes text that has not changed since the app started.
+    ///
+    /// A plain Dictionary is enough: every path into OnBarsChanged is on the UI thread -
+    /// the property setters, the constructor, and the refresh, which resumes there via
+    /// ConfigureAwait(true) before measuring.
+    /// </summary>
+    private static readonly Dictionary<string, double> _labelWidths = new(StringComparer.Ordinal);
+
     /// <summary>Measures a label in the same typeface and size the bars render it with.</summary>
     private static double MeasureLabel(string text)
     {
         if (string.IsNullOrEmpty(text)) return 0;
+        if (_labelWidths.TryGetValue(text, out var cached)) return cached;
+
+        var width = MeasureLabelCore(text);
+
+        // Only cached once the font subsystem is up: the fallback below is an estimate, and
+        // caching it would keep a wrong width for the life of the process.
+        if (_fontsReady) _labelWidths[text] = width;
+        return width;
+    }
+
+    /// <summary>
+    /// False until a real measurement succeeds. The first calls happen before Avalonia has
+    /// initialised, where measurement throws and the estimate stands in.
+    /// </summary>
+    private static bool _fontsReady;
+
+    private static double MeasureLabelCore(string text)
+    {
         try
         {
             var ft = new Avalonia.Media.FormattedText(
@@ -756,6 +831,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 new Avalonia.Media.Typeface(Avalonia.Media.FontFamily.Default),
                 9,
                 Avalonia.Media.Brushes.Gray);
+
+            _fontsReady = true;
             return ft.Width;
         }
         catch (Exception)

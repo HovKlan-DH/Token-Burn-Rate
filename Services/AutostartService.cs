@@ -50,8 +50,12 @@ public static class AutostartService
         {
             if (ExecutablePath is null) return false;
             if (OperatingSystem.IsWindows()) return WindowsIsEnabled();
-            if (OperatingSystem.IsMacOS()) return File.Exists(MacPlistPath);
-            if (OperatingSystem.IsLinux()) return File.Exists(LinuxDesktopPath);
+
+            // Existence alone is not enough on either of these: an entry left behind by a
+            // copy that has since moved would report autostart as on while launching
+            // nothing. Same rule as the Windows branch - it counts only if it points here.
+            if (OperatingSystem.IsMacOS()) return FileNamesThisExecutable(MacPlistPath);
+            if (OperatingSystem.IsLinux()) return FileNamesThisExecutable(LinuxDesktopPath);
         }
         catch (Exception)
         {
@@ -81,6 +85,40 @@ public static class AutostartService
         }
     }
 
+    /// <summary>
+    /// Whether an existing autostart file refers to the executable running now.
+    ///
+    /// Both the plist and the .desktop file embed the path in markup this does not need to
+    /// parse to answer the only question being asked - is this entry ours, or a leftover
+    /// from a copy that has moved. A substring test is sound here in a way it is not for
+    /// the registry: these files are written solely by this method, so the path appears in
+    /// exactly one place and in a form we chose.
+    /// </summary>
+    private static bool FileNamesThisExecutable(string path)
+    {
+        if (!File.Exists(path)) return false;
+
+        try
+        {
+            var content = File.ReadAllText(path);
+
+            // Each writer escapes the path its own way - XML entities in the plist,
+            // backslashes in the .desktop Exec key - so the raw path may not appear
+            // literally. Test the escaped forms too rather than reporting a perfectly good
+            // entry as stale because it contained a "$" or an "&".
+            return content.Contains(ExecutablePath!, StringComparison.Ordinal)
+                || content.Contains(EscapeExecArgument(ExecutablePath!), StringComparison.Ordinal)
+                || content.Contains(System.Security.SecurityElement.Escape(ExecutablePath!),
+                                    StringComparison.Ordinal);
+        }
+        catch (Exception)
+        {
+            // Unreadable but present: assume it is ours rather than offering to rewrite a
+            // file that cannot be read back.
+            return true;
+        }
+    }
+
     // ---- Windows -----------------------------------------------------------------------
 
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -92,9 +130,34 @@ public static class AutostartService
         var value = key?.GetValue(AppId) as string;
         if (string.IsNullOrWhiteSpace(value)) return false;
 
-        // Treat a stale entry pointing at a moved or renamed exe as not enabled, so
-        // toggling it on rewrites the path instead of silently doing nothing.
-        return value.Contains(ExecutablePath!, StringComparison.OrdinalIgnoreCase);
+        // Compare the path the entry actually points at, not a substring of the line. A
+        // Contains test matches a stale "...\TokenBurnRate.exe.bak" or a wrapper that names
+        // this exe as an argument, and would then report autostart as on when it is not.
+        return string.Equals(ParseExecutable(value!), ExecutablePath!,
+                             StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Extracts the program path from a Run entry, which is a command line rather than a
+    /// bare path: normally <c>"C:\dir\App.exe"</c>, but arguments may follow, and an entry
+    /// written by something else may not be quoted at all.
+    /// </summary>
+    private static string ParseExecutable(string command)
+    {
+        var value = command.Trim();
+        if (value.Length == 0) return value;
+
+        if (value[0] == '"')
+        {
+            var end = value.IndexOf('"', 1);
+            return end < 0 ? value[1..] : value[1..end];
+        }
+
+        // Unquoted: the path runs to the first space. A path with spaces and no quotes is
+        // ambiguous by nature - Windows itself guesses here - and is not something this app
+        // ever writes, so the simple reading is the right one.
+        var space = value.IndexOf(' ');
+        return space < 0 ? value : value[..space];
     }
 
     [SupportedOSPlatform("windows")]
@@ -171,10 +234,29 @@ public static class AutostartService
             [Desktop Entry]
             Type=Application
             Name={DisplayName}
-            Exec="{ExecutablePath}"
+            Exec={EscapeExecArgument(ExecutablePath!)}
             Terminal=false
             X-GNOME-Autostart-enabled=true
 
             """);
+    }
+
+    /// <summary>
+    /// Quotes a path for a Desktop Entry Exec key, per the XDG spec.
+    ///
+    /// Plain double quotes are not enough: inside a quoted argument the spec requires
+    /// <c>"</c>, <c>`</c>, <c>$</c> and <c>\</c> to be escaped with a backslash. An
+    /// unescaped path containing any of them yields an entry the session manager either
+    /// ignores or mis-splits, and autostart then silently does nothing.
+    /// </summary>
+    private static string EscapeExecArgument(string path)
+    {
+        var escaped = path
+            .Replace("\\", "\\\\")
+            .Replace("\"", "\\\"")
+            .Replace("`", "\\`")
+            .Replace("$", "\\$");
+
+        return $"\"{escaped}\"";
     }
 }

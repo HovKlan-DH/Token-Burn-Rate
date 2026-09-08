@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -42,9 +41,12 @@ public static class CrashLog
             e.SetObserved();
         };
 
-        // Fires on the throwing thread before the stack unwinds, which is the only hook
-        // that sees an exception the UI framework catches and swallows.
-        AppDomain.CurrentDomain.FirstChanceException += OnFirstChance;
+        // Not hooked: AppDomain.CurrentDomain.FirstChanceException. It is the only hook that
+        // sees an exception the UI framework catches and swallows, but it fires for every
+        // exception in the process - including the many thrown by design here, from
+        // AppState's writability probe to every ConvertBack - so a handler would be invoked
+        // constantly to do nothing. Add it here temporarily, filtered, if a specific
+        // swallowed exception ever needs chasing.
     }
 
     /// <summary>
@@ -52,14 +54,6 @@ public static class CrashLog
     /// wants it on record.
     /// </summary>
     public static void Record(Exception? ex, string context) => Write(ex, context);
-
-    private static void OnFirstChance(object? sender, FirstChanceExceptionEventArgs e)
-    {
-        // Deliberately does nothing. First-chance fires for every exception, including the
-        // many that are caught and handled normally - logging them all would bury the real
-        // crash in noise. The subscription is kept as the documented place to add a filter
-        // if a specific swallowed exception ever needs chasing.
-    }
 
     private static void Write(Exception? ex, string context)
     {

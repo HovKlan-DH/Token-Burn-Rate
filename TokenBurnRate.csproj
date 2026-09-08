@@ -15,6 +15,7 @@
          MSBuild properties: they belong here rather than in app.manifest, which is a Win32
          side-by-side manifest with a fixed schema that ignores anything it does not know. -->
     <AssemblyTitle>$(AssemblyName)</AssemblyTitle>
+    <Title>$(AssemblyName)</Title>
     <Product>$(AssemblyName)</Product>
     <Description>Live Claude Code and GitHub Copilot usage.</Description>
     <Authors>Dennis Helligsø</Authors>

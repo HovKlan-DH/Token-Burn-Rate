@@ -24,6 +24,21 @@ public static class TrayNotifier
     public static bool IsSupported => OperatingSystem.IsWindows();
 
     /// <summary>
+    /// The message-only window and shell icon registered by the last successful Show, kept
+    /// so a second call reuses them instead of leaking a fresh set. Both outlive the call
+    /// deliberately - see ShowCore - and are released by <see cref="Cleanup"/> at exit.
+    /// </summary>
+    private static IntPtr _hwnd;
+    private static IntPtr _hIcon;
+    private static bool _registered;
+
+    /// <summary>
+    /// Whether _hIcon came from ExtractIcon (ours to destroy) rather than being the shared
+    /// IDI_APPLICATION handle (which must never be destroyed).
+    /// </summary>
+    private static bool _ownsIcon;
+
+    /// <summary>
     /// Shows a balloon. Returns false if it could not be shown, so the caller can decide
     /// whether to fall back or to leave the "already notified" flag unset.
     /// </summary>
@@ -43,47 +58,106 @@ public static class TrayNotifier
         }
     }
 
-    private static bool ShowCore(string title, string message)
+    /// <summary>
+    /// Removes the shell icon and releases the window and icon handles. Called at shutdown;
+    /// safe to call when nothing was ever shown, and safe to call twice.
+    /// </summary>
+    public static void Cleanup()
     {
-        // A message-only window owns the icon. It never renders; it exists solely to give
-        // Shell_NotifyIcon an hWnd to associate the notification with.
-        var hwnd = CreateWindowExW(0, "STATIC", "TokenBurnRateNotify", 0, 0, 0, 0, 0,
-                                   HWND_MESSAGE, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
-        if (hwnd == IntPtr.Zero) return false;
+        if (!IsSupported) return;
 
         try
         {
-            var data = new NOTIFYICONDATAW
+            if (_registered && _hwnd != IntPtr.Zero)
             {
-                cbSize = (uint)Marshal.SizeOf<NOTIFYICONDATAW>(),
-                hWnd = hwnd,
-                uID = 1,
-                uFlags = NIF_INFO | NIF_ICON | NIF_STATE,
-                dwState = NIS_HIDDEN,
-                dwStateMask = NIS_HIDDEN,
-                hIcon = LoadAppIcon(),
-                szInfoTitle = Trim(title, 63),
-                szInfo = Trim(message, 255),
-                dwInfoFlags = NIIF_NONE,
-                szTip = "TokenBurnRate",
-            };
+                // NIM_DELETE reads only hWnd and uID, but the ByValTStr fields are marshalled
+                // whatever it reads, and a null one throws. Empty strings keep that quiet.
+                var data = new NOTIFYICONDATAW
+                {
+                    cbSize = (uint)Marshal.SizeOf<NOTIFYICONDATAW>(),
+                    hWnd = _hwnd,
+                    uID = NotifyIconId,
+                    szTip = "",
+                    szInfo = "",
+                    szInfoTitle = "",
+                };
+                Shell_NotifyIconW(NIM_DELETE, ref data);
+                _registered = false;
+            }
 
-            if (!Shell_NotifyIconW(NIM_ADD, ref data)) return false;
+            // Only an ExtractIcon handle is ours; IDI_APPLICATION is shared and destroying
+            // it would corrupt an object other windows in the process still use.
+            if (_hIcon != IntPtr.Zero && _ownsIcon) DestroyIcon(_hIcon);
+            _hIcon = IntPtr.Zero;
+            _ownsIcon = false;
 
-            // The balloon is queued by NIM_ADD; the icon itself is no longer needed once
-            // Windows has taken the message. Deleting it immediately would cancel the
-            // balloon, so removal waits for the notification's own lifetime to end.
-            return true;
+            if (_hwnd != IntPtr.Zero) { DestroyWindow(_hwnd); _hwnd = IntPtr.Zero; }
         }
-        finally
+        catch (Exception)
         {
-            // The window is left alive deliberately: destroying it here would take the
-            // pending balloon with it. Windows tears both down when the process exits,
-            // and this runs at most once per session.
+            // Cleanup runs on the way out; the process is about to release all of this
+            // anyway, so a failure here has nothing left to affect.
         }
     }
 
-    /// <summary>The app's own icon, so the balloon is recognisably from this app.</summary>
+    private static bool ShowCore(string title, string message)
+    {
+        // A message-only window owns the icon. It never renders; it exists solely to give
+        // Shell_NotifyIcon an hWnd to associate the notification with. Created once and
+        // reused: a retry after a failed NIM_ADD must not leak a second window.
+        if (_hwnd == IntPtr.Zero)
+        {
+            _hwnd = CreateWindowExW(0, "STATIC", "TokenBurnRateNotify", 0, 0, 0, 0, 0,
+                                    HWND_MESSAGE, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+        }
+        if (_hwnd == IntPtr.Zero) return false;
+
+        if (_hIcon == IntPtr.Zero) _hIcon = LoadAppIcon();
+
+        var icon = new NOTIFYICONDATAW
+        {
+            cbSize = (uint)Marshal.SizeOf<NOTIFYICONDATAW>(),
+            hWnd = _hwnd,
+            uID = NotifyIconId,
+            uFlags = NIF_INFO | NIF_ICON | NIF_STATE,
+            dwState = NIS_HIDDEN,
+            dwStateMask = NIS_HIDDEN,
+            hIcon = _hIcon,
+            szInfoTitle = Trim(title, 63),
+            szInfo = Trim(message, 255),
+            dwInfoFlags = NIIF_NONE,
+            szTip = "TokenBurnRate",
+        };
+
+        // NIM_ADD registers the icon and queues the balloon in one call, but only the first
+        // time: a second NIM_ADD on a live id fails. Once registered, NIM_MODIFY carries
+        // the balloon instead.
+        var command = _registered ? NIM_MODIFY : NIM_ADD;
+        if (!Shell_NotifyIconW(command, ref icon))
+        {
+            // A stale registration from a previous instance that died without cleaning up
+            // makes NIM_ADD fail. Drop it and try once more before giving up.
+            if (command == NIM_ADD)
+            {
+                Shell_NotifyIconW(NIM_DELETE, ref icon);
+                if (Shell_NotifyIconW(NIM_ADD, ref icon)) { _registered = true; return true; }
+            }
+            return false;
+        }
+
+        // The icon stays registered: deleting it now would cancel the balloon it is
+        // carrying. Cleanup removes it when the process shuts down.
+        _registered = true;
+        return true;
+    }
+
+    /// <summary>
+    /// The app's own icon, so the balloon is recognisably from this app.
+    ///
+    /// Sets <see cref="_ownsIcon"/> when the handle came from ExtractIcon and is therefore
+    /// ours to destroy. The IDI_APPLICATION fallback is a shared system handle: passing it
+    /// to DestroyIcon is undefined, so ownership is tracked rather than assumed.
+    /// </summary>
     private static IntPtr LoadAppIcon()
     {
         try
@@ -93,7 +167,11 @@ public static class TrayNotifier
             {
                 var icon = ExtractIconW(IntPtr.Zero, exe, 0);
                 // ExtractIcon returns 1 for "file has no icons", which is not a handle.
-                if (icon != IntPtr.Zero && icon != new IntPtr(1)) return icon;
+                if (icon != IntPtr.Zero && icon != new IntPtr(1))
+                {
+                    _ownsIcon = true;
+                    return icon;
+                }
             }
         }
         catch (Exception)
@@ -101,6 +179,7 @@ public static class TrayNotifier
             // Fall through to the generic application icon.
         }
 
+        _ownsIcon = false;
         return LoadIconW(IntPtr.Zero, IDI_APPLICATION);
     }
 
@@ -111,6 +190,11 @@ public static class TrayNotifier
     // ---- interop -------------------------------------------------------------------------
 
     private const int NIM_ADD = 0x00000000;
+    private const int NIM_MODIFY = 0x00000001;
+    private const int NIM_DELETE = 0x00000002;
+
+    /// <summary>Fixed id for this app's notification icon, paired with the hWnd above.</summary>
+    private const uint NotifyIconId = 1;
 
     private const uint NIF_ICON = 0x00000002;
     private const uint NIF_STATE = 0x00000008;
@@ -162,6 +246,14 @@ public static class TrayNotifier
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern IntPtr LoadIconW(IntPtr hInstance, IntPtr lpIconName);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool DestroyWindow(IntPtr hWnd);
+
+    // Only for handles from ExtractIcon; a shared handle from LoadIcon must not be passed
+    // here, which is why LoadAppIcon's fallback path is tracked separately below.
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool DestroyIcon(IntPtr hIcon);
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
     private static extern IntPtr ExtractIconW(IntPtr hInst, string lpszExeFileName, int nIconIndex);

@@ -76,6 +76,19 @@ public sealed class UsageBar : Control
     }
 
 
+    /// <summary>
+    /// The last built caption, with the inputs it was built from.
+    ///
+    /// Render is on the hot path: the compositor repaints on window moves and on anything
+    /// overlapping the acrylic-blurred window, and every Fraction change invalidates all
+    /// eight bars. The caption text itself changes at most once a minute, so shaping it per
+    /// paint is work thrown away. Rebuilt only when one of its inputs actually differs.
+    /// </summary>
+    private FormattedText? _cachedText;
+    private string? _cachedCaption;
+    private IBrush? _cachedBrush;
+    private double _cachedWidth;
+
     public override void Render(DrawingContext context)
     {
         var w = Bounds.Width;
@@ -88,17 +101,33 @@ public sealed class UsageBar : Control
         FormattedText? text = null;
         if (hasCaption)
         {
-            text = new FormattedText(
-                caption!,
-                System.Globalization.CultureInfo.CurrentCulture,
-                FlowDirection.LeftToRight,
-                new Typeface(FontFamily.Default),
-                9,
-                CaptionBrush ?? Brushes.Gray)
+            var brush = CaptionBrush ?? Brushes.Gray;
+
+            // Width matters as well as the string: MaxTextWidth drives the ellipsis, so a
+            // resized control has to re-trim even when the caption is unchanged.
+            if (_cachedText is null
+                || !string.Equals(_cachedCaption, caption, StringComparison.Ordinal)
+                || !ReferenceEquals(_cachedBrush, brush)
+                || _cachedWidth != w)
             {
-                MaxTextWidth = Math.Max(0, w),
-                Trimming = TextTrimming.CharacterEllipsis,
-            };
+                _cachedText = new FormattedText(
+                    caption!,
+                    System.Globalization.CultureInfo.CurrentCulture,
+                    FlowDirection.LeftToRight,
+                    new Typeface(FontFamily.Default),
+                    9,
+                    brush)
+                {
+                    MaxTextWidth = Math.Max(0, w),
+                    Trimming = TextTrimming.CharacterEllipsis,
+                };
+
+                _cachedCaption = caption;
+                _cachedBrush = brush;
+                _cachedWidth = w;
+            }
+
+            text = _cachedText;
         }
 
         // Without a caption this is a plain slim bar. With one, the control becomes the
