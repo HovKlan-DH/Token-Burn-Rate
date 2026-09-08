@@ -136,8 +136,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
             return;
         }
 
+        // On a work machine the plan is org-assigned, so show which org grants it as well
+        // as the plan tier; on a personal account there is no org and the tier stands alone.
         var plan = status.Organizations.Count > 0
-            ? string.Join(", ", status.Organizations)
+            ? $"{status.Organizations[0]} · {status.Plan}"
             : status.Plan;
         var reset = status.ResetDate is { } d ? $" · resets {d:MMM d}" : "";
         CopilotSubtitle = plan + reset;
@@ -159,7 +161,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
             }
             else if (!q.HasQuota || q.Entitlement <= 0)
             {
-                // Free plan has no premium-interaction entitlement at all.
+                // Not every plan grants every bucket: the free tier has no premium
+                // interactions, so the bar is dimmed rather than shown as an empty quota.
                 bar.ValueText = "—";
                 bar.DetailText = "not included in plan";
                 bar.Fraction = 0;
