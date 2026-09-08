@@ -813,6 +813,17 @@ public sealed class MainViewModel : INotifyPropertyChanged
     }
 
     /// <summary>
+    /// Whether the deadline the countdown is running towards has already passed, so the
+    /// figures on screen are older than the interval promises.
+    ///
+    /// A timer tick normally clears this within the second. It stays true when the tick
+    /// never came - the machine was suspended - or when the refresh it started failed,
+    /// since the deadline is pushed a full interval out either way. Read when the widget
+    /// comes back from the tray, which is exactly when a stale figure would be believed.
+    /// </summary>
+    public bool RefreshOverdue => DateTimeOffset.UtcNow > _nextRefresh;
+
+    /// <summary>
     /// Updates the countdown to the next refresh. Both services are refreshed by one timer,
     /// so there is a single figure rather than one per panel. Driven once a second by the
     /// view so it visibly ticks down between refreshes.
