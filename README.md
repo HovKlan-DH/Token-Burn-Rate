@@ -235,13 +235,26 @@ history with it:
     "dayOpening": 1961,
     "weekStart": "2026-09-07",
     "weekOpening": 1961
-  }
+  },
+  "refreshSeconds": 60
 }
 ```
+
+`window` is where the widget was last left on screen, so it reopens in the same place. A
+position that no longer lands on a connected screen is ignored, which keeps the widget from
+disappearing off the edge of a display that has since been unplugged.
 
 `pacing` holds the credit balance recorded at the first launch of the day and of the week,
 which is what makes the Day and Week bars measurable at all. Deleting the file re-anchors
 both to the current balance at the next launch; nothing else is lost.
+
+`refreshSeconds` is how often both services are polled. It is written out with its default
+of 60 on first run and has no setting in the UI - edit it here and restart. Values are
+clamped to 5-3600 seconds, and whatever the app ends up acting on is written back, so a
+value outside that range is corrected in the file rather than silently overruled at every
+launch; anything missing or nonsensical becomes 60. From a minute up the countdown ticks in
+whole minutes, switching to seconds for the final minute and to hours and minutes at the
+top of the range.
 
 If the executable's own folder cannot be written - a read-only network share, or
 `Program Files` - the file falls back to `%APPDATA%\TokenBurnRate\TokenBurnRate.json`, so
@@ -277,7 +290,7 @@ choice is remembered in the state file.
 
 The close button minimises to the notification area rather than exiting, so the widget
 keeps tracking in the background. Left-click the tray icon to bring it back; its
-right-click menu has **Show** and **Quit**, and Quit is what actually ends the process.
+right-click menu has **Show** and **Exit**, and Exit is what actually ends the process.
 
 The first time the window disappears this way, a notification says the app is still
 running - once only, recorded as `trayNoticeShown` in the state file. Delete that key to

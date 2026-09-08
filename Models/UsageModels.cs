@@ -47,8 +47,16 @@ public sealed class CopilotQuota
     public bool HasQuota { get; init; }
 
     public double Used => Entitlement > 0 ? Math.Max(0, Entitlement - Remaining) : CreditsUsed;
+
+    /// <summary>The bar's fill, which saturates at full - there is no room past the end.</summary>
     public double Fraction => Entitlement > 0 ? Math.Clamp(Used / Entitlement, 0, 1) : 0;
-    public double Percent => Fraction * 100;
+
+    /// <summary>
+    /// The figure shown in the caption, deliberately not clamped. Taking it from Fraction
+    /// would cap it at 100 and make a bucket at its limit indistinguishable from one at
+    /// three times it - the overspend the caption exists to report.
+    /// </summary>
+    public double Percent => Entitlement > 0 ? Used / Entitlement * 100 : 0;
 }
 
 public sealed class CopilotStatus

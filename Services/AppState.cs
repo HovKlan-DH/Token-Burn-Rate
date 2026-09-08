@@ -63,6 +63,17 @@ public sealed class AppState
     [JsonPropertyName("trayNoticeShown")]
     public bool? TrayNoticeShown { get; set; }
 
+    /// <summary>
+    /// Seconds between refreshes. Nothing in the UI offers this: it exists for the rare
+    /// case of wanting a slower or faster poll than the default, set by editing the file.
+    ///
+    /// Written back with the default when absent, so the key is always present to be
+    /// edited - a setting that has to be typed from memory before it exists is one nobody
+    /// will find, and the file is the only place this one is visible at all.
+    /// </summary>
+    [JsonPropertyName("refreshSeconds")]
+    public int? RefreshSeconds { get; set; }
+
     public sealed class WindowState
     {
         [JsonPropertyName("x")] public int X { get; set; }

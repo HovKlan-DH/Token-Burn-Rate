@@ -21,7 +21,7 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// Set when the user has chosen to exit for real, so OnClosing stops intercepting and
-    /// lets the window close. Without it, "Quit" from the tray would only hide the window
+    /// lets the window close. Without it, "Exit" from the tray would only hide the window
     /// again and the process would never end.
     /// </summary>
     private bool _exiting;
@@ -70,8 +70,9 @@ public partial class MainWindow : Window
         _vm.LoadCollapsedState();
 
         // Copilot's quota is a remote call and Claude's parse is incremental, so a 60s
-        // cadence keeps the display live without hammering either source.
-        _timer = new DispatcherTimer { Interval = MainViewModel.RefreshInterval };
+        // cadence keeps the display live without hammering either source. Read after
+        // LoadCollapsedState, which is what resolves it from the state file.
+        _timer = new DispatcherTimer { Interval = _vm.RefreshInterval };
         _timer.Tick += (_, _) => RunSafely(() => _vm.RefreshAsync(_cts.Token), "refresh timer");
         _timer.Start();
 
@@ -176,17 +177,17 @@ public partial class MainWindow : Window
             var show = new NativeMenuItem("Show");
             show.Click += (_, _) => RestoreFromTray();
 
-            // Quitting has to live here: with close minimising instead of exiting, the tray
+            // Exiting has to live here: with close minimising instead of exiting, the tray
             // is the only place left that can actually end the process.
-            var quit = new NativeMenuItem("Quit");
-            quit.Click += (_, _) => ExitApplication();
+            var exit = new NativeMenuItem("Exit");
+            exit.Click += (_, _) => ExitApplication();
 
             _tray = new TrayIcon
             {
                 Icon = Icon,
                 ToolTipText = "TokenBurnRate",
                 IsVisible = true,
-                Menu = new NativeMenu { show, quit },
+                Menu = new NativeMenu { show, exit },
             };
 
             // Left-clicking the icon is the fast path back; the menu is for everything else.
@@ -216,9 +217,9 @@ public partial class MainWindow : Window
         if (Services.AppState.Load().TrayNoticeShown == true) return;
 
         var shown = Services.TrayNotifier.Show(
-            "TokenBurnRate is still running",
-            "The widget is in the notification area. Click its icon to bring it back, or "
-            + "right-click for Quit.");
+            "TokenBurnRate is still running.",
+            "The application is visible in the tray area. Click its icon to bring it back, "
+            + "or right-click for Exit.");
 
         if (shown) Services.AppState.Update(a => a.TrayNoticeShown = true);
     }

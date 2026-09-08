@@ -17,7 +17,7 @@ namespace TokenBurnRate
             if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
             {
                 // The widget hides to the tray rather than closing, so shutdown cannot be
-                // tied to its window. The tray menu's Quit is what ends the process.
+                // tied to its window. The tray menu's Exit is what ends the process.
                 desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
                 desktop.MainWindow = new MainWindow();
             }

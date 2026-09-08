@@ -17,11 +17,65 @@ public sealed class BarViewModel : INotifyPropertyChanged
     private string _detailText = "";
     private double _fraction;
     private bool _isEnabled = true;
+    private bool _isOverBudget;
+
+    /// <summary>
+    /// The panel's accent, as the colour string the fill uses while inside its allowance.
+    ///
+    /// It lives on the bar rather than in the template because it is the only thing that
+    /// separated the three per-panel templates; carrying it here lets all three rows share
+    /// one template instead of three copies differing by a single literal.
+    /// </summary>
+    public required string Accent { get; init; }
+
+    /// <summary>
+    /// Whether the caption should turn red along with the bar.
+    ///
+    /// False for Claude, whose caption is a reset time rather than a percentage - colouring
+    /// it would read as a problem with the reset itself. True where the caption is the
+    /// overspend figure, which is exactly what the colour is reporting.
+    /// </summary>
+    public bool WarnCaption { get; init; } = true;
 
     public string Label { get => _label; set => Set(ref _label, value); }
     public string ValueText { get => _valueText; set => Set(ref _valueText, value); }
     public string DetailText { get => _detailText; set => Set(ref _detailText, value); }
     public bool IsEnabled { get => _isEnabled; set => Set(ref _isEnabled, value); }
+
+    /// <summary>
+    /// Whether this bar has passed its allowance. The bar itself saturates at full, so
+    /// without this the difference between spending exactly the budget and spending nearly
+    /// four times it is a percentage in small grey text - which is what it looked like.
+    /// </summary>
+    public bool IsOverBudget
+    {
+        get => _isOverBudget;
+        set
+        {
+            if (!Set(ref _isOverBudget, value)) return;
+            OnPropertyChanged(nameof(FillColour));
+            OnPropertyChanged(nameof(CaptionColour));
+            OnPropertyChanged(nameof(ValueColour));
+        }
+    }
+
+    // The three colours a row is drawn in, resolved here rather than in the template. The
+    // rule is one line each and identical for all three panels, which is what lets the
+    // panels share a single template instead of repeating the same converter twelve times.
+
+    /// <summary>Red past the allowance, the panel's own accent inside it.</summary>
+    public string FillColour => _isOverBudget ? OverColour : Accent;
+
+    /// <summary>Red only where the caption is the figure that went over - see <see cref="WarnCaption"/>.</summary>
+    public string CaptionColour => _isOverBudget && WarnCaption ? OverColour : MutedColour;
+
+    /// <summary>The percentage or count, which reddens on every panel.</summary>
+    public string ValueColour => _isOverBudget ? OverColour : TextColour;
+
+    /// <summary>Red, chosen to stay legible on the dark background the widget uses.</summary>
+    private const string OverColour = "#F85149";
+    private const string MutedColour = "#6B7079";
+    private const string TextColour = "#E8EAED";
 
     public double Fraction
     {
@@ -34,11 +88,12 @@ public sealed class BarViewModel : INotifyPropertyChanged
     public event PropertyChangedEventHandler? PropertyChanged;
     private void OnPropertyChanged([CallerMemberName] string? n = null)
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(n));
-    private void Set<T>(ref T field, T value, [CallerMemberName] string? n = null)
+    private bool Set<T>(ref T field, T value, [CallerMemberName] string? n = null)
     {
-        if (EqualityComparer<T>.Default.Equals(field, value)) return;
+        if (EqualityComparer<T>.Default.Equals(field, value)) return false;
         field = value;
         OnPropertyChanged(n);
+        return true;
     }
 }
 
@@ -82,6 +137,19 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private bool _traySupported;
     private double _labelWidth = 86;
     private string _signInText = "";
+
+    // One accent per panel, matching the section headings in the XAML. They live here
+    // because the bars carry them: the three bar templates were identical but for these.
+    private const string ClaudeAccent = "#D97757";
+    private const string CopilotAccent = "#58A6FF";
+    private const string PacingAccent = "#3FB950";
+
+    /// <summary>
+    /// A Claude bar, whose caption is a reset time and so is left uncoloured when the
+    /// limit is full - see <see cref="BarViewModel.WarnCaption"/>.
+    /// </summary>
+    private static BarViewModel NewClaudeBar(string label)
+        => new() { Label = label, ValueText = "—", Accent = ClaudeAccent, WarnCaption = false };
 
     public ObservableCollection<BarViewModel> ClaudeBars { get; } = new();
     public ObservableCollection<BarViewModel> CopilotBars { get; } = new();
@@ -149,16 +217,32 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         if (field == value) return false;
 
-        if (value && WouldHideEverything(name)) return false;
+        if (value && WouldHideEverything(name))
+        {
+            // Refused, but the menu's two-way IsChecked has already cleared the tick on the
+            // way in. Raise the unchanged property so the binding reads the field back and
+            // the checkmark returns - otherwise the item looks unticked while its panel is
+            // still on screen.
+            //
+            // Routed through the same notifier the accepted path uses, so whatever a hide
+            // is made to affect in future is refreshed here too rather than only in the
+            // branch someone remembered to update.
+            HiddenChanged(name!);
+            return false;
+        }
 
         field = value;
-        OnPropertyChanged(name!);
-        OnPropertyChanged(nameof(CanHideClaude));
-        OnPropertyChanged(nameof(CanHideCopilot));
-        OnPropertyChanged(nameof(CanHidePacing));
+        HiddenChanged(name!);
         PersistHidden();
         return true;
     }
+
+    /// <summary>
+    /// Announces the state of one hide flag. Called for an accepted change and for a
+    /// refused one alike: a refusal has to repaint the tick just as an acceptance does,
+    /// and the two differ only in whether the field moved.
+    /// </summary>
+    private void HiddenChanged(string name) => OnPropertyChanged(name);
 
     /// <summary>True when hiding the named panel would leave no panel visible.</summary>
     private bool WouldHideEverything(string? name)
@@ -169,17 +253,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
         return !claude && !copilot && !pacing;
     }
 
-    // The menu greys out an item that is the last one standing.
-    public bool CanHideClaude => !ClaudeVisible || !WouldHideEverything(nameof(ClaudeHidden));
-    public bool CanHideCopilot => !CopilotVisible || !WouldHideEverything(nameof(CopilotHidden));
-    public bool CanHidePacing => !PacingVisible || !WouldHideEverything(nameof(PacingHidden));
-
     private void VisibilityChanged(string visibleName)
     {
         OnPropertyChanged(visibleName);
-        OnPropertyChanged(nameof(CanHideClaude));
-        OnPropertyChanged(nameof(CanHideCopilot));
-        OnPropertyChanged(nameof(CanHidePacing));
         // Hiding or showing the Copilot panel moves the reset date between the two panels.
         if (visibleName == nameof(CopilotVisible)) UpdatePacingSubtitle();
         SoloChanged();
@@ -370,11 +446,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public MainViewModel()
     {
         foreach (var label in new[] { "SESSION", "WEEK" })
-            ClaudeBars.Add(new BarViewModel { Label = label, ValueText = "—" });
+            ClaudeBars.Add(NewClaudeBar(label));
         foreach (var label in new[] { "COMPLETIONS", "CHAT", "PREMIUM" })
-            CopilotBars.Add(new BarViewModel { Label = label, ValueText = "—" });
+            CopilotBars.Add(new BarViewModel { Label = label, ValueText = "—", Accent = CopilotAccent });
         foreach (var label in new[] { "DAY", "WEEK", "MONTH" })
-            PacingBars.Add(new BarViewModel { Label = label, ValueText = "—" });
+            PacingBars.Add(new BarViewModel { Label = label, ValueText = "—", Accent = PacingAccent });
     }
 
     public async Task RefreshAsync(CancellationToken ct = default)
@@ -415,7 +491,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
         if (limits.IsAvailable)
         {
-            SyncBars(ClaudeBars, limits.Limits.Count);
+            SyncClaudeBars(ClaudeBars, limits.Limits.Count);
             for (int i = 0; i < limits.Limits.Count; i++)
             {
                 var l = limits.Limits[i];
@@ -425,6 +501,15 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 bar.ValueText = $"{l.Percent:0}%";
                 bar.DetailText = l.ResetText;
                 bar.IsEnabled = true;
+
+                // No warning glyph here: this caption is the reset time, not a percentage,
+                // so a "⚠" in front of it would read as a problem with the reset. The bar
+                // and the percentage still turn red, which is where a full limit shows.
+                //
+                // Tested on the rounded figure, not the raw one: the percentage is printed
+                // to the nearest whole number, so 99.6 shows as "100%" and would otherwise
+                // sit there in white - the one reading the colour is there to explain.
+                bar.IsOverBudget = IsSpent(l.Percent);
             }
         }
         ClaudeAvailable = limits.IsAvailable;
@@ -453,7 +538,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
         var pacing = _pacing.Build(status, DateTime.Now);
         if (pacing is null)
         {
+            // Clear the bars as well as hiding the panel. They are reused, so a day that
+            // went over budget before the credit bucket dropped out would keep its red
+            // fill and its "⚠ 377% of today" caption, ready to be shown as current the
+            // moment pacing became available again.
             PacingAvailable = false;
+            foreach (var bar in PacingBars) Reset(bar);
             return;
         }
 
@@ -478,7 +568,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
             // though the bar itself stops at full.
             bar.Fraction = Math.Clamp(fraction, 0, 1);
             bar.ValueText = value;
-            bar.DetailText = $"{percent:0}% of {what}";
+
+            // At or past the allowance the caption turns red and carries a warning sign.
+            // The bar cannot show this on its own: it saturates at full, so 100% and 377%
+            // draw identically, and the overspend was legible only in the small print.
+            var over = IsSpent(percent);
+            bar.IsOverBudget = over;
+            bar.DetailText = $"{Warning(over)}{percent:0}% of {what}";
             bar.IsEnabled = true;
         }
     }
@@ -547,10 +643,42 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
     }
 
-    /// <summary>Grows or shrinks a bar list so it matches however many limits the API returned.</summary>
-    private static void SyncBars(ObservableCollection<BarViewModel> bars, int count)
+    /// <summary>
+    /// Returns a bar to the state a bar with nothing to show should be in.
+    ///
+    /// Bars are reused across refreshes, so every field a previous poll set has to be
+    /// cleared - the over-budget flag above all. Leaving it set is what made a service that
+    /// dropped out keep the red fill and the "⚠ 100% used" caption it earned minutes ago,
+    /// with "n/a" printed over the top of them.
+    /// </summary>
+    private static void Reset(BarViewModel bar)
     {
-        while (bars.Count < count) bars.Add(new BarViewModel { Label = "", ValueText = "—" });
+        bar.ValueText = "n/a";
+        bar.DetailText = "";
+        bar.Fraction = 0;
+        bar.IsEnabled = false;
+        bar.IsOverBudget = false;
+    }
+
+    /// <summary>
+    /// Whether a percentage counts as spent, judged on the figure actually printed.
+    ///
+    /// Every caption formats with "0", so 99.6 reaches the screen as "100%". Testing the
+    /// raw value would leave that reading sitting in white while claiming to be full,
+    /// which is the one case the colour exists to explain.
+    /// </summary>
+    private static bool IsSpent(double percent) => Math.Round(percent, MidpointRounding.AwayFromZero) >= 100;
+
+    /// <summary>The caption's warning prefix, kept apart so the format string is written once.</summary>
+    private static string Warning(bool over) => over ? "⚠ " : "";
+
+    /// <summary>
+    /// Grows or shrinks the Claude bar list so it matches however many limits the API
+    /// returned. Only Claude needs this: the other two panels have a fixed set of rows.
+    /// </summary>
+    private static void SyncClaudeBars(ObservableCollection<BarViewModel> bars, int count)
+    {
+        while (bars.Count < count) bars.Add(NewClaudeBar(""));
         while (bars.Count > count) bars.RemoveAt(bars.Count - 1);
     }
 
@@ -568,7 +696,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
             SignInText = "Sign in to GitHub";
             _copilotReset = "";
             PacingAvailable = false;
-            foreach (var bar in CopilotBars) { bar.ValueText = "n/a"; bar.Fraction = 0; bar.IsEnabled = false; }
+            foreach (var bar in CopilotBars) Reset(bar);
+            foreach (var bar in PacingBars) Reset(bar);
             return;
         }
 
@@ -587,7 +716,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
         for (int i = 0; i < CopilotBars.Count; i++)
         {
             var bar = CopilotBars[i];
-            if (i >= status.Quotas.Count) { bar.ValueText = "n/a"; bar.IsEnabled = false; continue; }
+            // Bars are reused across refreshes, so the over-budget flag has to be cleared
+            // here too - otherwise a bucket that drops out of the response keeps the red
+            // it earned on the previous poll.
+            if (i >= status.Quotas.Count)
+            {
+                Reset(bar);
+                continue;
+            }
 
             var q = status.Quotas[i];
             bar.Label = q.Label;
@@ -598,6 +734,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 bar.DetailText = "unlimited";
                 bar.Fraction = 0;
                 bar.IsEnabled = true;
+                bar.IsOverBudget = false;
             }
             else if (!q.HasQuota || q.Entitlement <= 0)
             {
@@ -607,21 +744,73 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 bar.DetailText = "not included in plan";
                 bar.Fraction = 0;
                 bar.IsEnabled = false;
+                bar.IsOverBudget = false;
             }
             else
             {
+                // A quota at 100% is spent, not merely nearly spent, and that is worth
+                // seeing at a glance rather than reading off the small print.
+                var spent = IsSpent(q.Percent);
                 bar.ValueText = $"{q.Used:0}/{q.Entitlement:0}";
-                bar.DetailText = $"{q.Percent:0}% used";
+                bar.DetailText = $"{Warning(spent)}{q.Percent:0}% used";
                 bar.Fraction = q.Fraction;
                 bar.IsEnabled = true;
+                bar.IsOverBudget = spent;
             }
         }
 
         RefreshPacing(status);
     }
 
-    /// <summary>How long between automatic refreshes of each service.</summary>
-    public static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(60);
+    /// <summary>The poll cadence used when the state file says nothing.</summary>
+    private const int DefaultRefreshSeconds = 60;
+
+    /// <summary>
+    /// How long between automatic refreshes of each service.
+    ///
+    /// Read once at startup from "refreshSeconds" in the state file, which is not surfaced
+    /// anywhere in the UI - it is an escape hatch for the odd machine that wants a gentler
+    /// or tighter poll, not a setting. Read once rather than per tick because the timer
+    /// interval is fixed when it is created, so re-reading would have no effect anyway.
+    ///
+    /// Clamped to 5s..1h: below that the Copilot call and the transcript parse would still
+    /// be running when the next tick arrived, and above it the countdown stops being
+    /// meaningful. A missing, zero or unparseable value falls back to the default.
+    /// </summary>
+    public TimeSpan RefreshInterval { get; private set; } = TimeSpan.FromSeconds(DefaultRefreshSeconds);
+
+    /// <summary>
+    /// Reads the cadence out of the state we have already loaded, correcting the file when
+    /// what it holds is not what the app will act on.
+    ///
+    /// Anything outside 5s..1h is clamped and the clamped figure written back, so the file
+    /// always agrees with the running app. Leaving it alone was worse than it sounds: a
+    /// file asking for 1 second would be honoured as 5 and go on saying 1 for ever, so the
+    /// setting looked accepted and stored while being quietly overruled at each launch.
+    /// </summary>
+    private void ResolveRefreshInterval(AppState state)
+    {
+        var seconds = state.RefreshSeconds is > 0
+            ? Math.Clamp(state.RefreshSeconds.Value, 5, 3600)
+            // Absent or nonsensical: fall back to the default, which is then written out
+            // below so the key sits in the file ready to be edited. A setting nobody can
+            // find is no setting at all, and this one is deliberately not in the UI.
+            : DefaultRefreshSeconds;
+
+        RefreshInterval = TimeSpan.FromSeconds(seconds);
+
+        if (state.RefreshSeconds == seconds) return;
+
+        try
+        {
+            AppState.Update(a => a.RefreshSeconds = seconds);
+        }
+        catch (Exception)
+        {
+            // A read-only or malformed file must never stop the app from polling; the
+            // clamped value still governs this run, it just is not recorded.
+        }
+    }
 
     /// <summary>
     /// Updates the countdown to the next refresh. Both services are refreshed by one timer,
@@ -639,6 +828,38 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
         // Round up, so the last second reads "1 second" rather than "0 seconds".
         var seconds = (int)Math.Ceiling(d.TotalSeconds);
+
+        // From a minute up, count in whole minutes only. Appending the seconds would
+        // rewrite the line every tick to change one digit, which on a long interval is
+        // flicker rather than information; the last minute switches to seconds, where the
+        // count is worth watching.
+        //
+        // The boundary is inclusive so that a full minute reads "1 minute" and the seconds
+        // run 59, 58, ... - at "> 60" the changeover printed "60 seconds" for one tick,
+        // which is the same duration said twice in two different units.
+        // An hour is the top of the permitted range, and at that end "60 minutes" is both
+        // the wrong unit and a figure the minute form was never meant to print. Hours and
+        // minutes together keep it readable without the line growing a third component.
+        if (seconds >= 3600)
+        {
+            var hours = seconds / 3600;
+            var rest = seconds % 3600 / 60;
+            Countdown = rest == 0
+                ? (hours == 1 ? "Updates in 1 hour" : $"Updates in {hours} hours")
+                : $"Updates in {hours}h {rest}m";
+            return;
+        }
+
+        if (seconds >= 60)
+        {
+            // Rounded down, so the figure only ever falls: rounding up would show "2
+            // minutes" at 61s and then drop to "1 minute" a tick later, which reads as the
+            // clock jumping backwards.
+            var minutes = seconds / 60;
+            Countdown = minutes == 1 ? "Updates in 1 minute" : $"Updates in {minutes} minutes";
+            return;
+        }
+
         Countdown = seconds == 1 ? "Updates in 1 second" : $"Updates in {seconds} seconds";
     }
 
@@ -646,6 +867,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public void LoadCollapsedState()
     {
         var state = AppState.Load();
+
+        // Read from the state already in hand rather than loading the file a second time,
+        // and from here rather than a static initializer: the fallback path puts this file
+        // on %APPDATA%, possibly a network share, and file I/O on the class-load path both
+        // blocks window construction and turns any failure into a permanently unusable
+        // type for the rest of the process.
+        ResolveRefreshInterval(state);
 
         InitialiseAutostart(state);
 
@@ -677,9 +905,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(ClaudeVisible));
             OnPropertyChanged(nameof(CopilotVisible));
             OnPropertyChanged(nameof(PacingVisible));
-            OnPropertyChanged(nameof(CanHideClaude));
-            OnPropertyChanged(nameof(CanHideCopilot));
-            OnPropertyChanged(nameof(CanHidePacing));
             UpdatePacingSubtitle();
         }
 

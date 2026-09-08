@@ -22,6 +22,32 @@
     <conv:DimOpacityConverter x:Key="DimOpacity"/>
     <conv:ChevronConverter x:Key="Chevron"/>
     <conv:HeaderTipConverter x:Key="HeaderTip"/>
+    <conv:ColourBrushConverter x:Key="Brush"/>
+
+    <!-- One template for all three panels. They differed only in the accent colour and in
+         whether the caption reddens with the bar, so both now travel on the bar itself
+         (Accent, WarnCaption) rather than being three near-identical copies to keep in
+         step. Fixed label and value columns keep every bar starting and ending at the same
+         x, and bottom alignment lines the text up with the bar band rather than with the
+         caption above it. -->
+    <DataTemplate x:Key="BarTemplate" x:DataType="vm:BarViewModel">
+      <Grid Margin="0,0,0,6" ColumnDefinitions="Auto,*,64"
+            Opacity="{Binding IsEnabled, Converter={StaticResource DimOpacity}}">
+        <TextBlock Grid.Column="0" Text="{Binding Label}" Classes="barlabel"
+                   VerticalAlignment="Bottom" Margin="0,0,8,-3"
+                   Width="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).LabelWidth}"/>
+        <conv:UsageBar Grid.Column="1" Height="18" VerticalAlignment="Bottom"
+                       Fraction="{Binding Fraction}"
+                       Caption="{Binding DetailText}"
+                       Track="#3A3D44"
+                       CaptionBrush="{Binding CaptionColour, Converter={StaticResource Brush}}"
+                       Fill="{Binding FillColour, Converter={StaticResource Brush}}"/>
+        <TextBlock Grid.Column="2" Text="{Binding ValueText}" Classes="barvalue"
+                   VerticalAlignment="Bottom" Margin="8,0,0,-4"
+                   HorizontalAlignment="Right"
+                   Foreground="{Binding ValueColour, Converter={StaticResource Brush}}"/>
+      </Grid>
+    </DataTemplate>
   </Window.Resources>
 
   <Window.Styles>
@@ -74,18 +100,19 @@
         <MenuItem Header="Show these topics:" IsEnabled="False"/>
         <!-- A topic with no data at all is dropped from the menu rather than greyed out:
              on a machine without Claude, an entry that can never do anything is noise. -->
+        <!-- Deliberately not bound to IsEnabled: the last topic standing still reads as a
+             normal, black menu entry, because it is not broken - it is simply the one that
+             cannot be turned off. Greying it made a checked topic look unavailable. The
+             refusal lives in SetHidden, which also puts the tick back. -->
         <MenuItem Header="Claude" ToggleType="CheckBox"
                   IsVisible="{Binding ClaudeAvailable}"
-                  IsChecked="{Binding !ClaudeHidden, Mode=TwoWay}"
-                  IsEnabled="{Binding CanHideClaude}"/>
+                  IsChecked="{Binding !ClaudeHidden, Mode=TwoWay}"/>
         <MenuItem Header="GitHub Copilot" ToggleType="CheckBox"
                   IsVisible="{Binding CopilotAvailable}"
-                  IsChecked="{Binding !CopilotHidden, Mode=TwoWay}"
-                  IsEnabled="{Binding CanHideCopilot}"/>
+                  IsChecked="{Binding !CopilotHidden, Mode=TwoWay}"/>
         <MenuItem Header="GitHub Copilot : My Pace" ToggleType="CheckBox"
                   IsVisible="{Binding PacingAvailable}"
-                  IsChecked="{Binding !PacingHidden, Mode=TwoWay}"
-                  IsEnabled="{Binding CanHidePacing}"/>
+                  IsChecked="{Binding !PacingHidden, Mode=TwoWay}"/>
         <Separator/>
         <MenuItem Header="Start with the computer" ToggleType="CheckBox"
                   IsChecked="{Binding AutostartEnabled, Mode=TwoWay}"
@@ -160,27 +187,8 @@
                      HorizontalAlignment="Right" VerticalAlignment="Center" Margin="8,0,0,0"
                      MaxWidth="200"/>
         </Grid>
-        <ItemsControl ItemsSource="{Binding ClaudeBars}" IsVisible="{Binding ClaudeExpanded}">
-          <ItemsControl.ItemTemplate>
-            <DataTemplate x:DataType="vm:BarViewModel">
-              <!-- Fixed label and value columns keep every bar starting and ending at the
-                   same x, and bottom alignment lines the text up with the bar band rather
-                   than with the caption above it. -->
-              <Grid Margin="0,0,0,6" ColumnDefinitions="Auto,*,64">
-                <TextBlock Grid.Column="0" Text="{Binding Label}" Classes="barlabel"
-                           VerticalAlignment="Bottom" Margin="0,0,8,-3"
-                           Width="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).LabelWidth}"/>
-                <conv:UsageBar Grid.Column="1" Height="18" VerticalAlignment="Bottom"
-                               Fraction="{Binding Fraction}"
-                               Caption="{Binding DetailText}"
-                               Track="#3A3D44" CaptionBrush="#6B7079" Fill="#D97757"/>
-                <TextBlock Grid.Column="2" Text="{Binding ValueText}" Classes="barvalue"
-                           VerticalAlignment="Bottom" Margin="8,0,0,-4"
-                           HorizontalAlignment="Right"/>
-              </Grid>
-            </DataTemplate>
-          </ItemsControl.ItemTemplate>
-        </ItemsControl>
+        <ItemsControl ItemsSource="{Binding ClaudeBars}" IsVisible="{Binding ClaudeExpanded}"
+                      ItemTemplate="{StaticResource BarTemplate}"/>
       </StackPanel>
 
       <!-- Copilot -->
@@ -195,28 +203,8 @@
                      HorizontalAlignment="Right" VerticalAlignment="Center" Margin="8,0,0,0"
                      MaxWidth="200"/>
         </Grid>
-        <ItemsControl ItemsSource="{Binding CopilotBars}" IsVisible="{Binding CopilotExpanded}">
-          <ItemsControl.ItemTemplate>
-            <DataTemplate x:DataType="vm:BarViewModel">
-              <!-- Fixed label and value columns keep every bar starting and ending at the
-                   same x, and bottom alignment lines the text up with the bar band rather
-                   than with the caption above it. -->
-              <Grid Margin="0,0,0,6" ColumnDefinitions="Auto,*,64"
-                    Opacity="{Binding IsEnabled, Converter={StaticResource DimOpacity}}">
-                <TextBlock Grid.Column="0" Text="{Binding Label}" Classes="barlabel"
-                           VerticalAlignment="Bottom" Margin="0,0,8,-3"
-                           Width="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).LabelWidth}"/>
-                <conv:UsageBar Grid.Column="1" Height="18" VerticalAlignment="Bottom"
-                               Fraction="{Binding Fraction}"
-                               Caption="{Binding DetailText}"
-                               Track="#3A3D44" CaptionBrush="#6B7079" Fill="#58A6FF"/>
-                <TextBlock Grid.Column="2" Text="{Binding ValueText}" Classes="barvalue"
-                           VerticalAlignment="Bottom" Margin="8,0,0,-4"
-                           HorizontalAlignment="Right"/>
-              </Grid>
-            </DataTemplate>
-          </ItemsControl.ItemTemplate>
-        </ItemsControl>
+        <ItemsControl ItemsSource="{Binding CopilotBars}" IsVisible="{Binding CopilotExpanded}"
+                      ItemTemplate="{StaticResource BarTemplate}"/>
 
         <!-- Shown only when a sign-in would fix the panel; uses the GitHub device flow,
              so no CLI install and no admin rights are required. -->
@@ -245,27 +233,8 @@
           <TextBlock Text="{Binding PacingSubtitle}" Classes="subtitle"
                      IsVisible="{Binding PacingExpanded}"/>
         </StackPanel>
-        <ItemsControl ItemsSource="{Binding PacingBars}" IsVisible="{Binding PacingExpanded}">
-          <ItemsControl.ItemTemplate>
-            <DataTemplate x:DataType="vm:BarViewModel">
-              <!-- Fixed label and value columns keep every bar starting and ending at the
-                   same x, and bottom alignment lines the text up with the bar band rather
-                   than with the caption above it. -->
-              <Grid Margin="0,0,0,6" ColumnDefinitions="Auto,*,64">
-                <TextBlock Grid.Column="0" Text="{Binding Label}" Classes="barlabel"
-                           VerticalAlignment="Bottom" Margin="0,0,8,-3"
-                           Width="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).LabelWidth}"/>
-                <conv:UsageBar Grid.Column="1" Height="18" VerticalAlignment="Bottom"
-                               Fraction="{Binding Fraction}"
-                               Caption="{Binding DetailText}"
-                               Track="#3A3D44" CaptionBrush="#6B7079" Fill="#3FB950"/>
-                <TextBlock Grid.Column="2" Text="{Binding ValueText}" Classes="barvalue"
-                           VerticalAlignment="Bottom" Margin="8,0,0,-4"
-                           HorizontalAlignment="Right"/>
-              </Grid>
-            </DataTemplate>
-          </ItemsControl.ItemTemplate>
-        </ItemsControl>
+        <ItemsControl ItemsSource="{Binding PacingBars}" IsVisible="{Binding PacingExpanded}"
+                      ItemTemplate="{StaticResource BarTemplate}"/>
       </StackPanel>
 
 
