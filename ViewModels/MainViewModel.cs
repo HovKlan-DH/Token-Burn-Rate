@@ -45,6 +45,7 @@ public sealed class BarViewModel : INotifyPropertyChanged
 public sealed class MainViewModel : INotifyPropertyChanged
 {
     private readonly ClaudeUsageService _claude = new();
+    private readonly ClaudeLimitsService _claudeLimits = new();
     private readonly CopilotUsageService _copilot = new();
 
     private string _statusText = "Loading…";
@@ -64,7 +65,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     public MainViewModel()
     {
-        foreach (var label in new[] { "5 HOUR", "WEEK", "MONTH" })
+        foreach (var label in new[] { "SESSION", "WEEK" })
             ClaudeBars.Add(new BarViewModel { Label = label, ValueText = "—" });
         foreach (var label in new[] { "COMPLETIONS", "CHAT", "PREMIUM" })
             CopilotBars.Add(new BarViewModel { Label = label, ValueText = "—" });
@@ -96,33 +97,58 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private async Task RefreshClaudeAsync(CancellationToken ct)
     {
-        if (!_claude.DataDirectoryExists)
+        // Bars come from Anthropic's own utilization figures, which is the only source that
+        // agrees with the Usage screen: the limits use fixed reset windows and a ceiling
+        // that is not published, so neither can be reconstructed from local transcripts.
+        var limits = await _claudeLimits.GetLimitsAsync(ct).ConfigureAwait(true);
+
+        if (limits.IsAvailable)
         {
-            ClaudeSubtitle = "no transcripts found";
-            foreach (var bar in ClaudeBars) { bar.ValueText = "n/a"; bar.Fraction = 0; bar.IsEnabled = false; }
-            return;
+            SyncBars(ClaudeBars, limits.Limits.Count);
+            for (int i = 0; i < limits.Limits.Count; i++)
+            {
+                var l = limits.Limits[i];
+                var bar = ClaudeBars[i];
+                bar.Label = l.Label;
+                bar.Fraction = l.Fraction;
+                bar.ValueText = $"{l.Percent:0}%";
+                bar.DetailText = l.ResetText;
+                bar.IsEnabled = true;
+            }
+        }
+        else
+        {
+            foreach (var bar in ClaudeBars)
+            {
+                bar.ValueText = "n/a";
+                bar.DetailText = "";
+                bar.Fraction = 0;
+                bar.IsEnabled = false;
+            }
         }
 
-        var records = await Task.Run(() => _claude.LoadAsync(ct), ct).ConfigureAwait(true);
-        var now = DateTimeOffset.UtcNow;
-        var windows = UsageAggregator.BuildClaudeWindows(records, now);
-
-        for (int i = 0; i < windows.Count && i < ClaudeBars.Count; i++)
+        // Transcripts still supply what the API omits: absolute tokens and burn rate.
+        var tokenText = "";
+        if (_claude.DataDirectoryExists)
         {
-            var w = windows[i];
-            var bar = ClaudeBars[i];
-            bar.Label = w.Label;
-            bar.Fraction = w.Fraction;
-            bar.IsEnabled = true;
-            bar.ValueText = Format.Tokens(w.Tokens);
-            bar.DetailText = w.HasBudget
-                ? $"{w.Percent:0}% of peak {Format.Tokens(w.Budget)}"
-                : "no history yet";
+            var records = await Task.Run(() => _claude.LoadAsync(ct), ct).ConfigureAwait(true);
+            var now = DateTimeOffset.UtcNow;
+            var rate = UsageAggregator.BurnRatePerHour(records, now);
+            BurnRateText = $"{Format.Tokens((long)rate)}/h";
+            tokenText = Format.Tokens(UsageAggregator.SumWindow(
+                records, UsageAggregator.SessionWindow, now)) + " tokens";
         }
 
-        var rate = UsageAggregator.BurnRatePerHour(records, now);
-        BurnRateText = $"{Format.Tokens((long)rate)}/h";
-        ClaudeSubtitle = $"{records.Count:N0} messages";
+        ClaudeSubtitle = limits.IsAvailable
+            ? string.IsNullOrEmpty(limits.Plan) ? tokenText : $"{limits.Plan} · {tokenText}"
+            : limits.Error ?? "unavailable";
+    }
+
+    /// <summary>Grows or shrinks a bar list so it matches however many limits the API returned.</summary>
+    private static void SyncBars(ObservableCollection<BarViewModel> bars, int count)
+    {
+        while (bars.Count < count) bars.Add(new BarViewModel { Label = "", ValueText = "—" });
+        while (bars.Count > count) bars.RemoveAt(bars.Count - 1);
     }
 
     private async Task RefreshCopilotAsync(CancellationToken ct)

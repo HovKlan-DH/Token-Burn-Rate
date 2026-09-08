@@ -16,6 +16,11 @@ Durable findings live in [.claude/memory/](.claude/memory/) — read
 
 ## Gotchas
 
+- **Claude bars must come from the API, not transcripts.** `api.anthropic.com/api/oauth/usage`
+  (Bearer token from `~/.claude/.credentials.json`, header `anthropic-beta: oauth-2025-04-20`)
+  returns the same utilization claude.ai shows. Transcripts cannot reproduce it: the ceiling
+  is unpublished and the limits reset at fixed times rather than rolling. Never write to the
+  credentials file — Claude Code owns and refreshes it.
 - **Claude transcripts repeat each message.** A streamed assistant message is appended up
   to 4x, so records must be de-duplicated by `message.id`. Summing naively roughly doubles
   every total.

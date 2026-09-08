@@ -61,3 +61,41 @@ public sealed class CopilotStatus
     public string? Error { get; set; }
     public bool IsAvailable => Error is null && Quotas.Count > 0;
 }
+
+/// <summary>One plan limit as reported by Anthropic, with its real reset time.</summary>
+public sealed class ClaudeLimit
+{
+    public required string Kind { get; init; }
+    public required string Label { get; init; }
+    /// <summary>Utilization 0-100, straight from the API. Not derived locally.</summary>
+    public double Percent { get; init; }
+    public string Severity { get; init; } = "normal";
+    public DateTimeOffset? ResetsAt { get; init; }
+    public bool IsActive { get; init; }
+
+    public double Fraction => Math.Clamp(Percent / 100.0, 0, 1);
+
+    /// <summary>Compact "resets in 4h 8m" style text, or empty when no reset is published.</summary>
+    public string ResetText
+    {
+        get
+        {
+            if (ResetsAt is not { } r) return "";
+            var d = r - DateTimeOffset.UtcNow;
+            if (d <= TimeSpan.Zero) return "resetting";
+            if (d.TotalDays >= 1) return $"resets in {(int)d.TotalDays}d {d.Hours}h";
+            if (d.TotalHours >= 1) return $"resets in {(int)d.TotalHours}h {d.Minutes}m";
+            return $"resets in {d.Minutes}m";
+        }
+    }
+}
+
+public sealed class ClaudeLimitsStatus
+{
+    public string Plan { get; set; } = "";
+    public List<ClaudeLimit> Limits { get; init; } = new();
+    public string? Error { get; init; }
+    public bool IsAvailable => Error is null && Limits.Count > 0;
+
+    public static ClaudeLimitsStatus Unavailable(string error) => new() { Error = error };
+}

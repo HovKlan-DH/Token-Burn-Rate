@@ -7,17 +7,28 @@ A small always-on-top desktop widget showing live AI usage for **Claude Code** a
 
 ## What it shows
 
-### Claude — 5 hour / week / month
-Read from Claude Code's local transcripts (`~/.claude/projects/**/*.jsonl`). Every
-assistant message records exact token usage, so these are real numbers, computed offline
-with no API call and no credentials.
+### Claude — session / week
 
-The **5 hour** window is first on purpose: Claude Code enforces a rolling 5-hour session
-limit, so that is the bar that predicts an actual cutoff. A calendar "today" bar would not.
+Read from Anthropic's own usage endpoint using the OAuth token that Claude Code already
+stores, so the percentages match the Usage screen on claude.ai exactly. Each bar shows real
+utilization and a real reset countdown ("resets in 4h 3m").
 
-Bars show `input + output + cache-creation` tokens. Cache *reads* are excluded from the
-headline figure — they are billed at a fraction of the input rate and run ~100x larger than
-everything else, so including them would flatten the bars into noise.
+Whichever limits your plan has are rendered, so a Max plan showing separate weekly Opus and
+Sonnet limits gets extra bars with no code change.
+
+The absolute token figure beside the plan name still comes from the local transcripts
+(`~/.claude/projects/**/*.jsonl`), which is the only place per-message token counts exist.
+It is informational: it counts `input + output + cache-creation` over a rolling five hours,
+and deliberately excludes cache *reads*, which are billed at a fraction of the input rate
+and run ~100x larger than everything else.
+
+> **Why not compute the bars from transcripts?**
+> An earlier version did, and it disagreed with claude.ai. Two reasons, both fatal:
+> Anthropic publishes no token ceiling, so the denominator had to be invented (the user's
+> own historical peak); and the real limits reset at fixed times, whereas a transcript
+> calculation can only measure a rolling lookback from now. A rolling window still counts
+> usage that a reset has already discarded. Limits can also be temporarily boosted, which
+> no local calculation can know about.
 
 ### GitHub Copilot — completions / chat / premium
 Read live from GitHub's `copilot_internal/user` endpoint, authenticated with the token from
@@ -55,15 +66,16 @@ so for most work tenants there is no "remaining" figure that would even be meani
 
 ## Bar denominators
 
-Anthropic publishes no per-plan token ceiling, so Claude's bars auto-calibrate: the heaviest
-window of that size ever seen in your history becomes 100%. Each bar reads "how heavy is
-this window against my own record", and adjusts as your habits change. Copilot's bars use
-the real entitlement reported by GitHub.
+Every bar is filled against a figure published by the service itself — Anthropic's
+utilization percentage, GitHub's entitlement. Nothing is inferred locally, so the widget
+cannot drift from what the vendor dashboards report.
 
 ## Requirements
 
-- **Claude panel** — Claude Code installed, with transcripts in `~/.claude/projects`.
-  Honours `CLAUDE_CONFIG_DIR`.
+- **Claude panel** — Claude Code installed and signed in. The OAuth token is read from
+  `~/.claude/.credentials.json` (honours `CLAUDE_CONFIG_DIR`) and **never written back**:
+  Claude Code owns that file and refreshes the token itself roughly every 8 hours. If the
+  token has expired the panel says so; run `claude` once to refresh it.
 - **Copilot panel** — [GitHub CLI](https://cli.github.com/) installed and authenticated
   (`gh auth login`). `GH_TOKEN` / `GITHUB_TOKEN` are used first if set. Works with personal
   and org-assigned seats alike; the same binary adapts to whichever it finds.
