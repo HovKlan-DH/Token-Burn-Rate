@@ -47,7 +47,7 @@ The panel adapts to whichever account the machine is signed in to, with no confi
 | Completions / Chat | quota bars | often unlimited, shown as ∞ |
 | Premium interactions | dimmed, not in plan | real bar (e.g. 177/300) |
 
-### My Pace — day / week / month
+### GitHub Copilot .: My Pace — day / week / month
 
 A second Copilot panel, below the first, that reframes the same credit balance as "how much
 can I spend today". GitHub reports only a point-in-time balance, so daily spend is

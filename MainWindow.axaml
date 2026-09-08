@@ -141,12 +141,12 @@
 
       <!-- The user's own pacing view, derived from the credit balance above. -->
       <StackPanel Spacing="7" IsVisible="{Binding PacingVisible}">
-        <Grid ColumnDefinitions="Auto,*">
-          <TextBlock Grid.Column="0" Text="MY PACE" Classes="section" Foreground="#3FB950"/>
-          <TextBlock Grid.Column="1" Text="{Binding PacingSubtitle}" Classes="subtitle"
-                     HorizontalAlignment="Right" VerticalAlignment="Center" Margin="8,0,0,0"
-                     MaxWidth="220"/>
-        </Grid>
+        <!-- The full name plus its subtitle cannot share one line at a readable size, so
+             the subtitle sits underneath rather than being truncated. -->
+        <StackPanel Spacing="2">
+          <TextBlock Text="GITHUB COPILOT .: MY PACE" Classes="section" Foreground="#3FB950"/>
+          <TextBlock Text="{Binding PacingSubtitle}" Classes="subtitle"/>
+        </StackPanel>
         <ItemsControl ItemsSource="{Binding PacingBars}">
           <ItemsControl.ItemTemplate>
             <DataTemplate x:DataType="vm:BarViewModel">
