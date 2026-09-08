@@ -47,6 +47,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private readonly ClaudeUsageService _claude = new();
     private readonly ClaudeLimitsService _claudeLimits = new();
     private readonly CopilotUsageService _copilot = new();
+    private readonly CopilotPacingService _pacing = new();
 
     private string _statusText = "Loading…";
     private string _claudeSubtitle = "";
@@ -57,10 +58,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private bool _copilotVisible = true;
     private bool _copilotNeedsSignIn;
     private bool _signInRunning;
+    private bool _pacingVisible;
+    private string _pacingSubtitle = "";
     private string _signInText = "";
 
     public ObservableCollection<BarViewModel> ClaudeBars { get; } = new();
     public ObservableCollection<BarViewModel> CopilotBars { get; } = new();
+    /// <summary>The user's own pacing view: how much of today's share of credits is spent.</summary>
+    public ObservableCollection<BarViewModel> PacingBars { get; } = new();
 
     public string StatusText { get => _statusText; set => Set(ref _statusText, value); }
     public string ClaudeSubtitle { get => _claudeSubtitle; set => Set(ref _claudeSubtitle, value); }
@@ -73,6 +78,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public bool CopilotVisible { get => _copilotVisible; set => Set(ref _copilotVisible, value); }
     public bool CopilotNeedsSignIn { get => _copilotNeedsSignIn; set => Set(ref _copilotNeedsSignIn, value); }
     public string SignInText { get => _signInText; set => Set(ref _signInText, value); }
+    public bool PacingVisible { get => _pacingVisible; set => Set(ref _pacingVisible, value); }
+    public string PacingSubtitle { get => _pacingSubtitle; set => Set(ref _pacingSubtitle, value); }
 
     public MainViewModel()
     {
@@ -80,6 +87,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
             ClaudeBars.Add(new BarViewModel { Label = label, ValueText = "—" });
         foreach (var label in new[] { "COMPLETIONS", "CHAT", "PREMIUM" })
             CopilotBars.Add(new BarViewModel { Label = label, ValueText = "—" });
+        foreach (var label in new[] { "DAY", "WEEK", "MONTH" })
+            PacingBars.Add(new BarViewModel { Label = label, ValueText = "—" });
     }
 
     public async Task RefreshAsync(CancellationToken ct = default)
@@ -142,6 +151,42 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
 
         ClaudeSubtitle = string.IsNullOrEmpty(limits.Plan) ? tokenText : $"{limits.Plan} · {tokenText}";
+    }
+
+    /// <summary>
+    /// Fills the pacing bars: today's share of the remaining credits, the same for the
+    /// current week, and the period total. Hidden when no bucket meters credits.
+    /// </summary>
+    private void RefreshPacing(CopilotStatus status)
+    {
+        var pacing = _pacing.Build(status, DateTime.Now);
+        if (pacing is null)
+        {
+            PacingVisible = false;
+            return;
+        }
+
+        PacingVisible = true;
+        PacingSubtitle = $"{pacing.PerDayAllowance:0}/day · {pacing.BusinessDaysLeft} work days left";
+
+        Set(PacingBars[0], pacing.DayFraction, pacing.DayPercent,
+            $"{pacing.UsedToday:0}/{pacing.PerDayAllowance:0}", "today");
+
+        Set(PacingBars[1], pacing.WeekFraction, pacing.WeekPercent,
+            $"{pacing.UsedThisWeek:0}/{pacing.WeekBudget:0}", "this week");
+
+        Set(PacingBars[2], pacing.MonthFraction, pacing.MonthPercent,
+            $"{pacing.UsedThisPeriod:0}/{pacing.Entitlement:0}", "this period");
+
+        static void Set(BarViewModel bar, double fraction, double percent, string value, string what)
+        {
+            // Spending past the allowance is meaningful, so the number keeps climbing even
+            // though the bar itself stops at full.
+            bar.Fraction = Math.Clamp(fraction, 0, 1);
+            bar.ValueText = value;
+            bar.DetailText = $"{percent:0}% of {what}";
+            bar.IsEnabled = true;
+        }
     }
 
     /// <summary>
@@ -221,6 +266,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             CopilotVisible = status.NeedsSignIn;
             CopilotSubtitle = status.Error ?? "unavailable";
             SignInText = "Sign in to GitHub";
+            PacingVisible = false;
             foreach (var bar in CopilotBars) { bar.ValueText = "n/a"; bar.Fraction = 0; bar.IsEnabled = false; }
             return;
         }
@@ -268,6 +314,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 bar.IsEnabled = true;
             }
         }
+
+        RefreshPacing(status);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

@@ -47,6 +47,37 @@ The panel adapts to whichever account the machine is signed in to, with no confi
 | Completions / Chat | quota bars | often unlimited, shown as ∞ |
 | Premium interactions | dimmed, not in plan | real bar (e.g. 177/300) |
 
+### My Pace — day / week / month
+
+A second Copilot panel, below the first, that reframes the same credit balance as "how much
+can I spend today". GitHub reports only a point-in-time balance, so daily spend is
+reconstructed: the balance at the **first launch of the day** is recorded, and today's usage
+is the drop from it.
+
+```
+allowance per day = credits remaining / business days remaining in the period
+used today        = balance at first launch today - balance now
+```
+
+With 1000 credits and 10 business days left, the allowance is 100/day; spend 60 and the bar
+reads 60%. A business day is Monday-Friday; public holidays are not modelled, which only
+makes the allowance slightly conservative.
+
+The allowance is **recalculated daily from what is actually left**, so it self-corrects:
+underspend today and tomorrow's rises, overspend and it falls. Spending past the allowance
+shows above 100% — the bar stops at full but the number keeps climbing.
+
+| Bar | Used | Budget |
+| --- | --- | --- |
+| Day | since first launch today | remaining / business days left |
+| Week | since Monday | daily allowance x business days left this week, plus what the week already spent |
+| Month | the period total from GitHub | the full entitlement |
+
+Only the current day and week are tracked (in `%APPDATA%\TokenBurnRate\pacing.json`), so a
+day the app is never opened simply starts fresh at the next launch. The panel picks whichever
+quota actually meters spend — premium interactions on a paid org seat, completions on a
+personal plan — and hides itself when a plan meters nothing.
+
 ### Why there is no Microsoft 365 Copilot panel
 
 M365 Copilot (Word, Excel, Outlook, Teams) is a **different product** from GitHub Copilot

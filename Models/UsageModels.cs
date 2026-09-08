@@ -101,3 +101,29 @@ public sealed class ClaudeLimitsStatus
 
     public static ClaudeLimitsStatus Unavailable(string error) => new() { Error = error };
 }
+
+/// <summary>
+/// A pacing view over the Copilot credit balance: how much of today's share is spent,
+/// derived from the balance recorded at the first launch of the day.
+/// </summary>
+public sealed class CopilotPacing
+{
+    public required string CreditLabel { get; init; }
+    public double Remaining { get; init; }
+    public double Entitlement { get; init; }
+    public int BusinessDaysLeft { get; init; }
+
+    public double PerDayAllowance { get; init; }
+    public double UsedToday { get; init; }
+    public double UsedThisWeek { get; init; }
+    public double WeekBudget { get; init; }
+    public double UsedThisPeriod { get; init; }
+
+    public double DayFraction => PerDayAllowance > 0 ? UsedToday / PerDayAllowance : 0;
+    public double WeekFraction => WeekBudget > 0 ? UsedThisWeek / WeekBudget : 0;
+    public double MonthFraction => Entitlement > 0 ? UsedThisPeriod / Entitlement : 0;
+
+    public double DayPercent => DayFraction * 100;
+    public double WeekPercent => WeekFraction * 100;
+    public double MonthPercent => MonthFraction * 100;
+}
