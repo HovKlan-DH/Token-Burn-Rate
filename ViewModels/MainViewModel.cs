@@ -997,27 +997,27 @@ public sealed class MainViewModel : INotifyPropertyChanged
         UpdatePacingSubtitle();
 
         Set(PacingBars[0], pacing.DayFraction, pacing.DayPercent,
-            $"{pacing.UsedToday:0}/{pacing.PerDayAllowance:0}", "today");
+            pacing.UsedToday, pacing.PerDayAllowance, "today");
 
         Set(PacingBars[1], pacing.WeekFraction, pacing.WeekPercent,
-            $"{pacing.UsedThisWeek:0}/{pacing.WeekBudget:0}", "this week");
+            pacing.UsedThisWeek, pacing.WeekBudget, "this week");
 
         Set(PacingBars[2], pacing.MonthFraction, pacing.MonthPercent,
-            $"{pacing.UsedThisPeriod:0}/{pacing.Entitlement:0}", "this period");
+            pacing.UsedThisPeriod, pacing.Entitlement, "this period");
 
-        static void Set(BarViewModel bar, double fraction, double percent, string value, string what)
+        static void Set(BarViewModel bar, double fraction, double percent, double used, double budget, string what)
         {
             // Spending past the allowance is meaningful, so the number keeps climbing even
             // though the bar itself stops at full.
             bar.Fraction = Math.Clamp(fraction, 0, 1);
-            bar.ValueText = value;
+            bar.ValueText = $"{percent:0}%";
 
             // At or past the allowance the caption turns red and carries a warning sign.
             // The bar cannot show this on its own: it saturates at full, so 100% and 377%
             // draw identically, and the overspend was legible only in the small print.
             var over = IsSpent(percent);
             bar.IsOverBudget = over;
-            bar.DetailText = $"{Warning(over)}{percent:0}% of {what}";
+            bar.DetailText = $"{Warning(over)}{Em($"{used:0}")} of {Em($"{budget:0}")} used {what}";
             bar.IsEnabled = true;
         }
     }
@@ -1141,6 +1141,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// <summary>The caption's warning prefix, kept apart so the format string is written once.</summary>
     private static string Warning(bool over) => over ? "⚠ " : "";
 
+    /// <summary>Marks a caption run for emphasised drawing by <see cref="UsageBar"/>.</summary>
+    private static string Em(string s) => UsageText.Highlight(s);
+
     /// <summary>
     /// Grows or shrinks the Claude bar list so it matches however many limits the API
     /// returned. Only Claude needs this: the other two panels have a fixed set of rows.
@@ -1228,8 +1231,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 // A quota at 100% is spent, not merely nearly spent, and that is worth
                 // seeing at a glance rather than reading off the small print.
                 var spent = IsSpent(q.Percent);
-                bar.ValueText = $"{q.Used:0}/{q.Entitlement:0}";
-                bar.DetailText = $"{Warning(spent)}{q.Percent:0}% used";
+                bar.ValueText = $"{q.Percent:0}%";
+                bar.DetailText = $"{Warning(spent)}{Em($"{q.Used:0}")} of {Em($"{q.Entitlement:0}")} used";
                 bar.Fraction = q.Fraction;
                 bar.IsEnabled = true;
                 bar.IsUnlimited = false;

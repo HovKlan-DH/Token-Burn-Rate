@@ -6,21 +6,22 @@
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
-    <RootNamespace>TokenBurnRate</RootNamespace>
-    <AssemblyName>TokenBurnRate</AssemblyName>
     <InvariantGlobalization>true</InvariantGlobalization>
     <ApplicationIcon>Assets\icon.ico</ApplicationIcon>
+    <RootNamespace>TokenBurnRate</RootNamespace>
 
-    <!-- Shown on the .exe's Details tab in Explorer, and baked into the assembly. These are
-         MSBuild properties: they belong here rather than in app.manifest, which is a Win32
-         side-by-side manifest with a fixed schema that ignores anything it does not know. -->
-    <AssemblyTitle>$(AssemblyName)</AssemblyTitle>
+    <AssemblyName>TokenBurnRate</AssemblyName>
     <Title>$(AssemblyName)</Title>
     <Product>$(AssemblyName)</Product>
     <Description>Live Claude Code and GitHub Copilot usage.</Description>
-    <Authors>Dennis Helligsø</Authors>
     <Copyright>©2026 Dennis Helligsø</Copyright>
+	  
     <Version>0.1.0</Version>
+    <!--
+    <InformationalVersion>$(AssemblyVersion)</InformationalVersion>
+    -->
+    <InformationalVersion>0.1.0-alpha.2</InformationalVersion>
+	  
   </PropertyGroup>
 
   <!-- Portable single-file publish. Trimming is intentionally OFF:
