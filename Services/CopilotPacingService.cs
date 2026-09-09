@@ -62,8 +62,6 @@ public sealed class CopilotPacingService
 
         return new CopilotPacing
         {
-            CreditLabel = bucket.Label,
-            Remaining = remaining,
             Entitlement = bucket.Entitlement,
             BusinessDaysLeft = daysLeftInPeriod,
             PerDayAllowance = perDay,

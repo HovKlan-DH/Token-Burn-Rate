@@ -9,18 +9,15 @@ A small always-on-top desktop widget showing live AI usage for **Claude Code** a
 
 ### Claude — session / week
 
+![Claude panel](docs/claude-panel.png)
+
 Read from Anthropic's own usage endpoint using the OAuth token that Claude Code already
 stores, so the percentages match the Usage screen on claude.ai exactly. Each bar shows real
-utilization and a real reset countdown ("resets in 4h 3m").
+utilization and a real reset countdown ("resets in **4h** **3m**") - the figures themselves
+are bold, since when a limit is full that is the one thing in the row worth reading.
 
 Whichever limits your plan has are rendered, so a Max plan showing separate weekly Opus and
 Sonnet limits gets extra bars with no code change.
-
-The absolute token figure beside the plan name still comes from the local transcripts
-(`~/.claude/projects/**/*.jsonl`), which is the only place per-message token counts exist.
-It is informational: it counts `input + output + cache-creation` over a rolling five hours,
-and deliberately excludes cache *reads*, which are billed at a fraction of the input rate
-and run ~100x larger than everything else.
 
 > **Why not compute the bars from transcripts?**
 > An earlier version did, and it disagreed with claude.ai. Two reasons, both fatal:
@@ -31,6 +28,9 @@ and run ~100x larger than everything else.
 > no local calculation can know about.
 
 ### GitHub Copilot — completions / chat / premium
+
+![Copilot panel](docs/copilot-panel.png)
+
 Read live from GitHub's `copilot_internal/user` endpoint, authenticated with the token from
 your existing `gh` CLI login. These are **monthly** quotas that reset on a fixed date.
 
@@ -48,6 +48,8 @@ The panel adapts to whichever account the machine is signed in to, with no confi
 | Premium interactions | dimmed, not in plan | real bar (e.g. 177/300) |
 
 ### GitHub Copilot : My Pace — day / week / month
+
+![Pacing panel](docs/pacing-panel.png)
 
 A second Copilot panel, below the first, that reframes the same credit balance as "how much
 can I spend today". GitHub reports only a point-in-time balance, so daily spend is
@@ -114,7 +116,10 @@ cannot drift from what the vendor dashboards report.
   personal and org-assigned seats alike; the same binary adapts to whichever it finds.
 
 Each panel degrades independently: if one source is unavailable the other still works. A
-service that is missing entirely has its panel hidden and the window shrinks to fit.
+service that is missing entirely has its panel hidden and the window shrinks to fit - the
+same happens if you hide a panel yourself from the tray icon's context menu:
+
+![Only the Claude panel shown](docs/claude-only.png)
 
 ## Build
 
@@ -236,7 +241,7 @@ history with it:
     "weekStart": "2026-09-07",
     "weekOpening": 1961
   },
-  "refreshSeconds": 60
+  "refreshSeconds": 180  // seconds between polls of both services. Default is 180. Lower values are accepted down to 5, at your own risk: the Anthropic usage endpoint is undocumented and rate-limits hard, and an HTTP 429 there can outlast the poll that caused it, so it is not recommended to go lower.
 }
 ```
 
@@ -248,13 +253,32 @@ disappearing off the edge of a display that has since been unplugged.
 which is what makes the Day and Week bars measurable at all. Deleting the file re-anchors
 both to the current balance at the next launch; nothing else is lost.
 
-`refreshSeconds` is how often both services are polled. It is written out with its default
-of 60 on first run and has no setting in the UI - edit it here and restart. Values are
-clamped to 5-3600 seconds, and whatever the app ends up acting on is written back, so a
-value outside that range is corrected in the file rather than silently overruled at every
-launch; anything missing or nonsensical becomes 60. From a minute up the countdown ticks in
-whole minutes, switching to seconds for the final minute and to hours and minutes at the
-top of the range.
+`refreshSeconds` is how often both services are polled - one timer drives both. It is
+written out with its default of **180** on first run and has no setting in the UI - edit it
+here and restart. Values are clamped to 5-3600 seconds, and whatever the app ends up acting
+on is written back, so a value outside that range is corrected in the file rather than
+silently overruled at every launch; anything missing or nonsensical becomes 180. From a
+minute up the countdown ticks in whole minutes, switching to seconds for the final minute
+and to hours and minutes at the top of the range.
+
+That trailing `//` is a real comment, kept because this setting exists nowhere else in the
+app. The app reads comments and trailing commas, so your own annotations survive a
+hand-edit; it rewrites its own note on each save, so deleting it brings it back.
+
+**Why 180 and not 60.** Three minutes is set by Anthropic's end, not GitHub's. At 60s the
+GitHub call uses about 1% of its documented 5,000 requests/hour, so it is nowhere near a
+limit. Anthropic's `api/oauth/usage` publishes no limit at all: it is undocumented, sends
+no `Retry-After`, and is
+[widely](https://github.com/anthropics/claude-code/issues/31637)
+[reported](https://github.com/anthropics/claude-code/issues/31021) to return 429 at a
+one-minute cadence and then keep returning it for hours. A rate-limited OAuth token can
+need a `claude logout && claude login` to clear, which disrupts Claude Code on that machine
+and not merely this widget. Since every figure on these bars moves over hours - reset
+windows are five hours and a week, Copilot's quota a month - a faster poll buys almost
+nothing for that risk.
+
+**Setting it lower is allowed.** Anything down to 5 seconds is honoured exactly as written
+and never corrected on your behalf; the risk above is simply yours to take.
 
 If the executable's own folder cannot be written - a read-only network share, or
 `Program Files` - the file falls back to `%APPDATA%\TokenBurnRate\TokenBurnRate.json`, so

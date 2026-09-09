@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.ComponentModel;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
@@ -59,6 +61,26 @@ public partial class MainWindow : Window
     /// </summary>
     private DateTime _trayClickBurstEnds = DateTime.MinValue;
 
+    /// <summary>The rounded percentage, colour and source name the tray ring was last drawn
+    /// with, so an unchanged refresh does not repaint the shell - see UpdateTrayIcon.</summary>
+    private int _lastIconPercent = int.MinValue;
+    private string? _lastIconColour;
+    private string? _lastIconName;
+    private bool _lastIconHadSource;
+
+    /// <summary>
+    /// The tray menu's "Show on icon" entries, keyed by the source id they set - see
+    /// BuildIconSourceMenu. Checked/visible state is refreshed from UpdateTrayIcon rather
+    /// than bound, because the Win32 backend never raises NativeMenu.Opening (see the
+    /// comment on the Show/Hide item), so nothing else would pick up a source that just
+    /// became available or unavailable.
+    /// </summary>
+    private readonly Dictionary<string, NativeMenuItem> _iconSourceItems = new(StringComparer.Ordinal);
+
+    /// <summary>Repaints the header cursors when a panel becomes or stops being the only one
+    /// on screen. Kept so OnClosing can unhook it - see ApplyCursors.</summary>
+    private PropertyChangedEventHandler? _soloCursorHandler;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -71,7 +93,7 @@ public partial class MainWindow : Window
             handle.PointerPressed += OnDragHandlePressed;
 
         if (this.FindControl<Button>("RefreshButton") is { } refresh)
-            refresh.Click += (_, _) => RunSafely(() => _vm.RefreshAsync(_cts.Token), "refresh button");
+            refresh.Click += (_, _) => RunRefresh("refresh button");
 
         if (this.FindControl<Button>("CloseButton") is { } close)
             close.Click += (_, _) => Close();
@@ -79,8 +101,18 @@ public partial class MainWindow : Window
         if (this.FindControl<Button>("PinButton") is { } pin)
             pin.Click += (_, _) => _vm.Pinned = !_vm.Pinned;
 
+        if (this.FindControl<MenuItem>("OpenFolderItem") is { } openFolder)
+            openFolder.Click += (_, _) => _vm.OpenApplicationFolder();
+
         if (this.FindControl<MenuItem>("ProjectPageItem") is { } projectPage)
             projectPage.Click += (_, _) => _vm.OpenProjectPage();
+
+        if (this.FindControl<MenuItem>("ExitItem") is { } exitItem)
+            exitItem.Click += (_, _) => ExitApplication();
+
+        HookColorPicker("ClaudeColorItem", "Claude", ViewModels.MainViewModel.ColorPanel.Claude);
+        HookColorPicker("CopilotColorItem", "GitHub Copilot", ViewModels.MainViewModel.ColorPanel.Copilot);
+        HookColorPicker("PacingColorItem", "GitHub Copilot : My Pace", ViewModels.MainViewModel.ColorPanel.Pacing);
 
         if (this.FindControl<Button>("SignInButton") is { } signIn)
             signIn.Click += (_, _) => RunSafely(() => _vm.SignInToGitHubAsync(_cts.Token), "sign-in button");
@@ -100,12 +132,22 @@ public partial class MainWindow : Window
         // cadence keeps the display live without hammering either source. Read after
         // LoadCollapsedState, which is what resolves it from the state file.
         _timer = new DispatcherTimer { Interval = _vm.RefreshInterval };
-        _timer.Tick += (_, _) => RunSafely(() => _vm.RefreshAsync(_cts.Token), "refresh timer");
+        _timer.Tick += (_, _) => RunRefresh("refresh timer", force: false);
         _timer.Start();
 
         // Separate one-second tick so the countdowns visibly run down between refreshes.
         _countdownTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        _countdownTimer.Tick += (_, _) => _vm.TickCountdowns();
+        _countdownTimer.Tick += (_, _) =>
+        {
+            _vm.TickCountdowns();
+
+            // A poll that found nothing shortens its own deadline to retry sooner than the
+            // cadence - see SettleLoadingState. The refresh timer runs on a fixed interval
+            // and cannot honour that, so the second-tick drives it: this is already the
+            // clock watching that deadline, and a retry is only ever due while the widget
+            // has nothing to show at all.
+            if (_vm.RetryDue) RunRefresh("startup retry", force: false);
+        };
         _countdownTimer.Start();
 
         // Opened fires on every Show(), not just the first one, so this guards itself.
@@ -120,9 +162,25 @@ public partial class MainWindow : Window
 
             ApplyCursors();     // the visual tree is only complete once the window is open
             _vm.TickCountdowns();
-            RunSafely(() => _vm.RefreshAsync(_cts.Token), "initial refresh");
+            RunRefresh("initial refresh");
+            Services.CheckInService.PingHome();
         };
     }
+
+    /// <summary>
+    /// Runs a refresh and repaints the tray ring once it completes. The single hook every
+    /// refresh path goes through, so the icon can never fall out of step with the bars it
+    /// mirrors.
+    ///
+    /// <paramref name="force"/> defaults to true: every caller except the background timer
+    /// is the user directly asking for current data, which should always reach the API even
+    /// if Claude's skip-until-reset gate would otherwise sit this poll out.
+    /// </summary>
+    private void RunRefresh(string context, bool force = true) => RunSafely(async () =>
+    {
+        await _vm.RefreshAsync(_cts.Token, force);
+        UpdateTrayIcon();
+    }, context);
 
     /// <summary>
     /// Sets cursors in code rather than XAML: a control that paints its own background -
@@ -166,12 +224,17 @@ public partial class MainWindow : Window
         }
 
         ApplyHeaderCursors();
-        _vm.PropertyChanged += (_, e) =>
+
+        // Held in a field so OnClosing can unhook it. The view model outlives the close -
+        // the dispatcher can still deliver a queued Solo change after the window is gone,
+        // and the handler would then run FindControl against a closed window.
+        _soloCursorHandler = (_, e) =>
         {
             if (e.PropertyName is nameof(_vm.ClaudeSolo) or nameof(_vm.CopilotSolo)
                 or nameof(_vm.PacingSolo))
                 ApplyHeaderCursors();
         };
+        _vm.PropertyChanged += _soloCursorHandler;
     }
 
     /// <summary>
@@ -195,6 +258,35 @@ public partial class MainWindow : Window
     {
         if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
             BeginMoveDrag(e);
+    }
+
+    /// <summary>
+    /// Wires one "Panel colors" submenu entry to open the picker for that panel, preset to
+    /// its current color, and apply whatever comes back - a hex string, or "default" to
+    /// clear the override. Nothing runs if the user cancels: PickAsync returns null and the
+    /// panel is left exactly as it was.
+    /// </summary>
+    private void HookColorPicker(string itemName, string panelLabel, ViewModels.MainViewModel.ColorPanel panel)
+    {
+        if (this.FindControl<MenuItem>(itemName) is not { } item) return;
+
+        // Through RunSafely like every other async handler here: ShowDialog can throw - an
+        // owner already closing, or the picker's theme resources failing to resolve - and an
+        // async void handler would discard that, leaving a menu item that does nothing with
+        // nothing logged to say why.
+        item.Click += (_, _) => RunSafely(async () =>
+        {
+            var current = _vm.AccentColorFor(panel);
+            var chosen = await Views.ColorPickerWindow.PickAsync(this, panelLabel, current);
+            if (chosen is null) return;     // cancelled
+
+            _vm.SetAccentColor(panel, chosen);
+
+            // The tray ring reads a bar's Accent through FillColour, same as the widget's
+            // own header and bars - but nothing else re-renders the tray on demand, so a
+            // change made here would sit unseen on the icon until the next timed refresh.
+            UpdateTrayIcon();
+        }, "panel colour picker");
     }
 
     // ---- tray ---------------------------------------------------------------------------
@@ -228,12 +320,14 @@ public partial class MainWindow : Window
             var exit = new NativeMenuItem("Exit");
             exit.Click += (_, _) => ExitApplication();
 
+            var iconSourceMenu = BuildIconSourceMenu();
+
             _tray = new TrayIcon
             {
                 Icon = Icon,
                 ToolTipText = "TokenBurnRate",
                 IsVisible = true,
-                Menu = new NativeMenu { toggle, exit },
+                Menu = new NativeMenu { toggle, iconSourceMenu, exit },
             };
 
             // Left-clicking the icon toggles the widget and double-clicking always shows
@@ -253,6 +347,117 @@ public partial class MainWindow : Window
             // No tray on this desktop: close keeps its original meaning of exiting.
             _tray = null;
             _vm.TraySupported = false;
+        }
+    }
+
+    /// <summary>
+    /// Builds the "Show on icon" submenu: one checkable entry per named source plus the
+    /// "Highest" default, so the ring can be pointed at a specific bar without editing the
+    /// state file. Built once with every entry always present in the NativeMenu itself -
+    /// only IsVisible is toggled at refresh time, since NativeMenuItem instances cannot be
+    /// inserted or removed from a live Win32 tray menu without rebuilding the whole thing.
+    /// </summary>
+    private NativeMenuItem BuildIconSourceMenu()
+    {
+        var submenu = new NativeMenu();
+
+        foreach (var (source, name) in ViewModels.MainViewModel.IconSourceNames)
+            AddItem(source, name);
+
+        var root = new NativeMenuItem("Show on icon") { Menu = submenu };
+        return root;
+
+        void AddItem(string source, string header)
+        {
+            // Avalonia 12 folded NativeMenuItemToggleType into MenuItemToggleType, the same
+            // enum the in-window MenuItem uses - same members, one name for both now.
+            var item = new NativeMenuItem(header) { ToggleType = MenuItemToggleType.Radio };
+            item.Click += (_, _) =>
+            {
+                _vm.IconSource = source;
+                RefreshIconSourceMenu();
+                UpdateTrayIcon();
+            };
+            submenu.Add(item);
+            _iconSourceItems[source] = item;
+        }
+    }
+
+    /// <summary>
+    /// Syncs the tray's "Show on icon" entries with the view model: ticks the active source
+    /// and hides whichever named bars are not currently available. Called from
+    /// UpdateTrayIcon, which already runs after every refresh - the one point where bar
+    /// availability can have changed.
+    /// </summary>
+    private void RefreshIconSourceMenu(IReadOnlyDictionary<string, bool>? available = null)
+    {
+        available ??= _vm.ResolveIconState().Available;
+
+        foreach (var (source, item) in _iconSourceItems)
+        {
+            item.IsChecked = _vm.IconSource == source;
+            item.IsVisible = source == "max"
+                || (available.TryGetValue(source, out var ok) && ok);
+        }
+    }
+
+    /// <summary>
+    /// Repaints the tray icon as a "quota ring" for whichever bar ResolveIconState picks.
+    /// See Assets/live-ring-icon.md. Called after every refresh path, so the ring can never
+    /// sit stale while the panel it mirrors has moved on.
+    /// </summary>
+    private void UpdateTrayIcon()
+    {
+        if (_tray is null) return;     // no tray on this desktop
+
+        try
+        {
+            // Availability can change on any refresh, and the winning bar falls out of the
+            // same pass - resolved once here rather than re-derived per menu entry.
+            var (available, source) = _vm.ResolveIconState();
+            RefreshIconSourceMenu(available);
+
+            if (source is null)
+            {
+                // Nothing on screen has a usable fraction: keep the static app identity
+                // rather than drawing an empty ring.
+                if (!_lastIconHadSource) return;
+                _lastIconHadSource = false;
+                _tray.Icon = Icon;
+                _tray.ToolTipText = "TokenBurnRate";
+                return;
+            }
+
+            var colour = _vm.ResolveIconColour(source);
+            var percent = (int)Math.Round(source.Percent, MidpointRounding.AwayFromZero);
+
+            // Which bar is showing is part of what the tray displays, not just how it is
+            // drawn: under "Auto (highest)" the winning bar can change to a different panel
+            // sitting at the same rounded percentage and the same colour - two bars over
+            // budget both resolve to the same red - and a guard on appearance alone would
+            // then leave the tooltip naming the panel that used to be highest. The tooltip
+            // is the only text saying which bar this is, so a stale one is confidently wrong.
+            var name = _vm.IconSourceDisplayName(source);
+
+            if (_lastIconHadSource && percent == _lastIconPercent
+                && string.Equals(colour, _lastIconColour, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(name, _lastIconName, StringComparison.Ordinal))
+                return;     // nothing visible changed - a 60s poll must not repaint the shell
+
+            // WindowIcon is not IDisposable in Avalonia - the bitmap it wraps is released by
+            // the GC once nothing references it, which is as soon as this assignment runs.
+            _tray.Icon = Services.TrayIconRenderer.Render(source.Fraction, colour);
+            _tray.ToolTipText = $"{name}\nUsed {percent}%";
+
+            _lastIconHadSource = true;
+            _lastIconPercent = percent;
+            _lastIconColour = colour;
+            _lastIconName = name;
+        }
+        catch (Exception ex)
+        {
+            // A failed icon repaint must never take down a monitor.
+            Services.CrashLog.Record(ex, "tray icon update");
         }
     }
 
@@ -329,7 +534,7 @@ public partial class MainWindow : Window
         _vm.TickCountdowns();       // the label is as old as the hide; catch it up before it shows
         _countdownTimer.Start();
 
-        if (_vm.RefreshOverdue) RunSafely(() => _vm.RefreshAsync(_cts.Token), "restore from tray");
+        if (_vm.RefreshOverdue) RunRefresh("restore from tray");
     }
 
     /// <summary>
@@ -399,7 +604,7 @@ public partial class MainWindow : Window
 
         // Hide() clears IsVisible, so that alone is the whole of the distinction: the
         // widget has no taskbar entry and no minimise affordance (ShowInTaskbar="False",
-        // SystemDecorations="BorderOnly"), which leaves hidden-in-tray as the only way it
+        // WindowDecorations="BorderOnly"), which leaves hidden-in-tray as the only way it
         // can be off screen.
         ToggleFromTray();
     }
@@ -477,6 +682,14 @@ public partial class MainWindow : Window
 
         _tray = null;
         Services.TrayNotifier.Cleanup();
+
+        // Unhooked for the same reason as the tray click: a Solo change already queued on
+        // the dispatcher would otherwise reach a handler that walks a closed window's tree.
+        if (_soloCursorHandler is { } soloCursor)
+        {
+            _vm.PropertyChanged -= soloCursor;
+            _soloCursorHandler = null;
+        }
 
         base.OnClosing(e);
 

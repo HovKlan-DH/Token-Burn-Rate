@@ -20,7 +20,7 @@
     <Description>Live Claude Code and GitHub Copilot usage.</Description>
     <Authors>Dennis Helligsø</Authors>
     <Copyright>©2026 Dennis Helligsø</Copyright>
-    <Version>1.0.0</Version>
+    <Version>0.1.0</Version>
   </PropertyGroup>
 
   <!-- Portable single-file publish. Trimming is intentionally OFF:
@@ -42,15 +42,17 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Avalonia" Version="11.3.12" />
-    <PackageReference Include="Avalonia.Desktop" Version="11.3.12" />
-    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.12" />
-    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.12" />
-    <!-- Transitive via Avalonia; pinned to the patched build for GHSA-xrw6-gwf8-vvr9
-         (CVE-2026-39959). D-Bus is Linux-only IPC and unused on Windows/macOS, but a
-         high-severity advisory in the dependency tree trips corporate scanners. -->
-    <PackageReference Include="Tmds.DBus.Protocol" Version="0.21.3" />
-    <PackageReference Include="Avalonia.Diagnostics" Version="11.3.12">
+    <PackageReference Include="Avalonia" Version="12.1.2" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.2" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.2" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.2" />
+    <PackageReference Include="Avalonia.Controls.ColorPicker" Version="12.1.2" />
+    <!-- Avalonia 12's own transitive floor (0.95.1) already carries the fix for
+         GHSA-xrw6-gwf8-vvr9 (CVE-2026-39959), so the explicit override this project used to
+         need under Avalonia 11 is gone - forcing an older version here would fight that
+         floor instead of matching it. -->
+    <!-- No 12.x build exists yet; latest available is still on the 11.3 line. -->
+    <PackageReference Include="Avalonia.Diagnostics" Version="11.3.21">
       <IncludeAssets Condition="'$(Configuration)' != 'Debug'">None</IncludeAssets>
       <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
     </PackageReference>

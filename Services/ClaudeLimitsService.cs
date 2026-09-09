@@ -114,7 +114,6 @@ public sealed class ClaudeLimitsService
                     Kind = kind,
                     Label = LabelFor(kind),
                     Percent = Dbl(l, "percent"),
-                    Severity = Str(l, "severity") ?? "normal",
                     ResetsAt = Time(l, "resets_at"),
                     IsActive = l.TryGetProperty("is_active", out var a) && a.ValueKind == JsonValueKind.True,
                 });

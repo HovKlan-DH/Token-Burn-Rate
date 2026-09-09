@@ -62,5 +62,28 @@ nunit-*.xml
 publish/
 .vs/
 
+# IDE and per-developer settings. These hold local paths, window layouts and launch
+# profiles - one developer's copy is noise in everyone else's checkout.
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.DotSettings.user
+.idea/
+.vscode/
+
+# The app's own state file, which is written beside the executable and so lands in the
+# repo root whenever the app is run from a source build. It holds this machine's window
+# position and its spending history - never something to publish. The GitHub token is not
+# covered here because it deliberately never lives beside the executable; it stays in
+# %APPDATA% with owner-only permissions.
+/TokenBurnRate.json
+
 # Crash reports written beside the executable
 *.crash.*.log
+
+# OS and tooling debris
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini

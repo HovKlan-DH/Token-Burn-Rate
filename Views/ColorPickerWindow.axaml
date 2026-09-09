@@ -1,0 +1,40 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:colorpicker="using:Avalonia.Controls"
+        x:Class="TokenBurnRate.Views.ColorPickerWindow"
+        Title="Panel color"
+        Width="300" SizeToContent="Height"
+        CanResize="False"
+        CanMinimize="False"
+        CanMaximize="False"
+        WindowStartupLocation="CenterOwner"
+        WindowDecorations="Full"
+        ShowInTaskbar="False"
+        Background="#1A1B1E">
+
+  <Window.Styles>
+    <Style Selector="Button.action">
+      <Setter Property="Padding" Value="10,5"/>
+      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="CornerRadius" Value="4"/>
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+  </Window.Styles>
+
+  <StackPanel Margin="14" Spacing="12">
+    <TextBlock Name="TitleText" Text="Claude accent color" FontSize="12" FontWeight="SemiBold"
+               Foreground="#E8EAED"/>
+
+    <ColorPicker Name="Picker" HorizontalAlignment="Stretch" IsAlphaEnabled="False" Cursor="Hand"/>
+
+    <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+      <Button Name="ResetButton" Grid.Column="0" Classes="action" Content="Use default"
+              Background="#26282D" Foreground="#8A8F98"/>
+      <Button Name="CancelButton" Grid.Column="2" Classes="action" Content="Cancel"
+              Background="#26282D" Foreground="#E8EAED" Margin="0,0,8,0"/>
+      <Button Name="OkButton" Grid.Column="3" Classes="action" Content="Apply"
+              Background="#1F6FEB" Foreground="White"/>
+    </Grid>
+  </StackPanel>
+</Window>

@@ -3,6 +3,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.Media.TextFormatting;
+using TokenBurnRate.Models;
 
 namespace TokenBurnRate.Views;
 
@@ -33,10 +34,17 @@ public sealed class UsageBar : Control
     public static readonly StyledProperty<IBrush?> CaptionBrushProperty =
         AvaloniaProperty.Register<UsageBar, IBrush?>(nameof(CaptionBrush));
 
+    /// <summary>
+    /// Brush for the runs the caption marked with <see cref="UsageText.Highlight"/>. Unset
+    /// leaves those runs the caption's own colour, still set apart by their weight.
+    /// </summary>
+    public static readonly StyledProperty<IBrush?> CaptionHighlightBrushProperty =
+        AvaloniaProperty.Register<UsageBar, IBrush?>(nameof(CaptionHighlightBrush));
+
     static UsageBar()
     {
         AffectsRender<UsageBar>(FractionProperty, FillProperty, TrackProperty, CornerProperty,
-            CaptionProperty, CaptionBrushProperty);
+            CaptionProperty, CaptionBrushProperty, CaptionHighlightBrushProperty);
     }
 
     public double Fraction
@@ -75,6 +83,12 @@ public sealed class UsageBar : Control
         set => SetValue(CaptionBrushProperty, value);
     }
 
+    public IBrush? CaptionHighlightBrush
+    {
+        get => GetValue(CaptionHighlightBrushProperty);
+        set => SetValue(CaptionHighlightBrushProperty, value);
+    }
+
 
     /// <summary>
     /// The last built caption, with the inputs it was built from.
@@ -87,6 +101,7 @@ public sealed class UsageBar : Control
     private FormattedText? _cachedText;
     private string? _cachedCaption;
     private IBrush? _cachedBrush;
+    private IBrush? _cachedHighlight;
     private double _cachedWidth;
 
     public override void Render(DrawingContext context)
@@ -102,16 +117,20 @@ public sealed class UsageBar : Control
         if (hasCaption)
         {
             var brush = CaptionBrush ?? Brushes.Gray;
+            var highlight = CaptionHighlightBrush;
 
             // Width matters as well as the string: MaxTextWidth drives the ellipsis, so a
             // resized control has to re-trim even when the caption is unchanged.
             if (_cachedText is null
                 || !string.Equals(_cachedCaption, caption, StringComparison.Ordinal)
                 || !ReferenceEquals(_cachedBrush, brush)
+                || !ReferenceEquals(_cachedHighlight, highlight)
                 || _cachedWidth != w)
             {
+                var (plain, spans) = UsageText.Split(caption!);
+
                 _cachedText = new FormattedText(
-                    caption!,
+                    plain,
                     System.Globalization.CultureInfo.CurrentCulture,
                     FlowDirection.LeftToRight,
                     new Typeface(FontFamily.Default),
@@ -122,8 +141,18 @@ public sealed class UsageBar : Control
                     Trimming = TextTrimming.CharacterEllipsis,
                 };
 
+                // Weight carries the emphasis on its own, so a caller that sets no
+                // highlight brush still gets readable figures rather than nothing.
+                foreach (var (start, length) in spans)
+                {
+                    _cachedText.SetFontWeight(FontWeight.Bold, start, length);
+                    if (highlight is not null)
+                        _cachedText.SetForegroundBrush(highlight, start, length);
+                }
+
                 _cachedCaption = caption;
                 _cachedBrush = brush;
+                _cachedHighlight = highlight;
                 _cachedWidth = w;
             }
 

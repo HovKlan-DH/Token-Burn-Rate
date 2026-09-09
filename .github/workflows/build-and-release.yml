@@ -1,0 +1,375 @@
+name: Build, Scan and Release
+
+#
+# Releases are made by hand from the Actions tab ("Run workflow"), never by pushing a
+# tag. That ordering matters: the tag is created by the final "Create GitHub Release"
+# step, so it only ever comes into existence for a release that actually passed. A run
+# that fails the build gate leaves nothing behind to clean up, and the same version
+# number can simply be re-run once the fix is pushed.
+#
+# The version is not typed in here - it is read from Version in TokenBurnRate.csproj,
+# the same property baked into the published assembly. Bumping that property before
+# running this workflow is the only place a release version is entered. Pre-release
+# status follows semver: a version with a "-" (e.g. "1.1.0-beta.1") is a pre-release, a
+# bare "X.Y.Z" is a full release.
+#
+# Mirrors the sibling Classic-Repair-Toolbox workflow (same account, same self-hosted
+# YubiKey runner) but scaled to what this project actually is: four portable
+# self-contained executables, no installer, no auto-update feed and no test suite - so
+# there is no Velopack packaging step and no unit-test gate here.
+#
+on:
+  workflow_dispatch:
+
+env:
+  EXE_WINDOWS: TokenBurnRate.exe
+  EXE_UNIX: TokenBurnRate
+  PROJECT: TokenBurnRate.csproj
+  SOLUTION: TokenBurnRate.slnx
+  TFM: net10.0
+
+jobs:
+  ###############################################################
+  # DETERMINE VERSION
+  ###############################################################
+  # Reads the release version straight out of the project instead of asking for it by
+  # hand - see the comment at the top of this file. Every other job reads it from here
+  # rather than re-deriving it, so there is exactly one place this happens.
+  determine-version:
+    name: Determine version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      is_prerelease: ${{ steps.ver.outputs.is_prerelease }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Read version from project
+        id: ver
+        run: |
+          VERSION=$(dotnet msbuild ${{ env.PROJECT }} -getProperty:Version -nologo)
+          echo "Read version: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          if [[ "$VERSION" == *"-"* ]]; then
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
+  ###############################################################
+  # BUILD GATE
+  ###############################################################
+  # Nothing gets published unless the commit being released builds clean. This proves
+  # the exact commit being released is shippable - a release can be started from any
+  # branch at any moment, including one that was never otherwise built in CI.
+  build-check:
+    name: Build (Release)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore ${{ env.SOLUTION }}
+
+      - name: Build (Release)
+        run: dotnet build ${{ env.SOLUTION }} -c Release --no-restore
+
+  ###############################################################
+  # CODEQL SECURITY SCAN
+  ###############################################################
+  security-scan:
+    name: CodeQL security scan
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write # Required to upload results to GitHub
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: 'csharp'
+          build-mode: autobuild
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v4
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:csharp"
+
+  ###############################################################
+  # WINDOWS BUILD (x64, self-contained, signed)
+  ###############################################################
+  build-windows:
+    needs: [build-check, determine-version]
+    name: Build Windows (x64 self-contained, signed)
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish Windows (x64)
+        shell: powershell
+        run: |
+          dotnet publish ${{ env.PROJECT }} `
+            -c Release `
+            -f ${{ env.TFM }} `
+            -r win-x64 `
+            --self-contained `
+            -p:Version=${{ needs.determine-version.outputs.version }} `
+            -o publish/win-x64
+
+      - name: Sign executable
+        shell: powershell
+        env:
+          YUBIKEY_PIN: ${{ secrets.YUBIKEY_PIN }}
+        run: |
+          java -jar C:\tools\jsign-6.0.jar `
+            --storetype YUBIKEY `
+            --storepass "$env:YUBIKEY_PIN" `
+            --tsaurl http://timestamp.digicert.com `
+            --alg SHA-256 `
+            publish/win-x64/${{ env.EXE_WINDOWS }}
+
+      - name: Prepare release asset
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+          Copy-Item publish/win-x64/${{ env.EXE_WINDOWS }} release-assets/TokenBurnRate-win-x64.exe -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-win-x64
+          path: release-assets/*
+
+  ###############################################################
+  # LINUX BUILD (x64, self-contained)
+  ###############################################################
+  build-linux:
+    needs: [build-check, determine-version]
+    name: Build Linux (x64 self-contained)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish Linux (x64)
+        run: |
+          dotnet publish ${{ env.PROJECT }} \
+            -c Release \
+            -f ${{ env.TFM }} \
+            -r linux-x64 \
+            --self-contained \
+            -p:Version=${{ needs.determine-version.outputs.version }} \
+            -o publish/linux-x64
+
+      - name: Prepare release asset
+        run: |
+          mkdir -p release-assets
+          cp publish/linux-x64/${{ env.EXE_UNIX }} release-assets/TokenBurnRate-linux-x64
+          chmod +x release-assets/TokenBurnRate-linux-x64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-linux-x64
+          path: release-assets/*
+
+  ###############################################################
+  # MACOS BUILD (arm64 + x64, self-contained)
+  ###############################################################
+  build-macos:
+    needs: [build-check, determine-version]
+    name: Build macOS (arm64 + x64 self-contained)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish macOS (arm64)
+        run: |
+          dotnet publish ${{ env.PROJECT }} \
+            -c Release \
+            -f ${{ env.TFM }} \
+            -r osx-arm64 \
+            --self-contained \
+            -p:Version=${{ needs.determine-version.outputs.version }} \
+            -o publish/osx-arm64
+
+      - name: Publish macOS (x64)
+        run: |
+          dotnet publish ${{ env.PROJECT }} \
+            -c Release \
+            -f ${{ env.TFM }} \
+            -r osx-x64 \
+            --self-contained \
+            -p:Version=${{ needs.determine-version.outputs.version }} \
+            -o publish/osx-x64
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          cp publish/osx-arm64/${{ env.EXE_UNIX }} release-assets/TokenBurnRate-osx-arm64
+          cp publish/osx-x64/${{ env.EXE_UNIX }} release-assets/TokenBurnRate-osx-x64
+          chmod +x release-assets/TokenBurnRate-osx-arm64 release-assets/TokenBurnRate-osx-x64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-macos
+          path: release-assets/*
+
+  ###############################################################
+  # CREATE GITHUB RELEASE
+  ###############################################################
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [determine-version, build-windows, build-linux, build-macos, security-scan]
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Download all release artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Set release tag
+        id: tag
+        run: |
+          echo "tag=${{ needs.determine-version.outputs.version }}" >> $GITHUB_OUTPUT
+
+      - name: Determine if Pre-release
+        id: prerelease_check
+        run: |
+          IS_PRE="${{ needs.determine-version.outputs.is_prerelease }}"
+          VERSION="${{ steps.tag.outputs.tag }}"
+
+          echo "is_prerelease=$IS_PRE" >> $GITHUB_OUTPUT
+
+          if [ "$IS_PRE" = "true" ]; then
+            case "$VERSION" in
+              *-alpha.*)
+                STAGE_LABEL="ALPHA"
+                BODY_LABEL="DEVELOPMENT"
+                ;;
+              *-beta.*)
+                STAGE_LABEL="BETA"
+                BODY_LABEL="TEST"
+                ;;
+              *-rc.*)
+                STAGE_LABEL="RELEASE CANDIDATE"
+                BODY_LABEL="RELEASE CANDIDATE"
+                ;;
+              *)
+                STAGE_LABEL="ALPHA"
+                BODY_LABEL="DEVELOPMENT"
+                ;;
+            esac
+
+            echo "release_name=$STAGE_LABEL - $VERSION" >> $GITHUB_OUTPUT
+            echo "stage_label=$STAGE_LABEL" >> $GITHUB_OUTPUT
+            echo "body_label=$BODY_LABEL" >> $GITHUB_OUTPUT
+          else
+            echo "release_name=$VERSION" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.prerelease_check.outputs.release_name }}
+          body: |
+            ${{ steps.prerelease_check.outputs.is_prerelease == 'true' && format('This is a {0} version, and should not be downloaded/used unless if coordinated with the developer.', steps.prerelease_check.outputs.body_label) || format('### Direct downloads for different platforms
+            | Platform | File |
+            |----------|------|
+            | Windows (x64) | [TokenBurnRate-win-x64.exe](https://github.com/{0}/releases/download/{1}/TokenBurnRate-win-x64.exe) |
+            | Linux (x64) | [TokenBurnRate-linux-x64](https://github.com/{0}/releases/download/{1}/TokenBurnRate-linux-x64) |
+            | macOS Apple Silicon (arm64) | [TokenBurnRate-osx-arm64](https://github.com/{0}/releases/download/{1}/TokenBurnRate-osx-arm64) |
+            | macOS Intel (x64) | [TokenBurnRate-osx-x64](https://github.com/{0}/releases/download/{1}/TokenBurnRate-osx-x64) |
+
+            The Windows executable is code-signed. Each is a single self-contained portable file - no installer, no runtime to install separately.', github.repository, steps.tag.outputs.tag) }}
+          draft: false
+          prerelease: ${{ steps.prerelease_check.outputs.is_prerelease == 'true' }}
+          files: |
+            release-assets/TokenBurnRate-win-x64.exe
+            release-assets/TokenBurnRate-linux-x64
+            release-assets/TokenBurnRate-osx-arm64
+            release-assets/TokenBurnRate-osx-x64
+
+      # Leaves at most one pre-release standing, and none at all once a full release ships.
+      # Deliberately ungated so one step covers both kinds of run - the "keep the current tag"
+      # check is what lets a single rule do both jobs. See the Classic-Repair-Toolbox workflow
+      # this is mirrored from for the fuller rationale.
+      - name: Delete superseded pre-releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CURRENT_TAG: ${{ steps.tag.outputs.tag }}
+          IS_PRERELEASE: ${{ steps.prerelease_check.outputs.is_prerelease }}
+        run: |
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            echo "Pre-release run - keeping [$CURRENT_TAG] and removing every older pre-release..."
+          else
+            echo "Full release [$CURRENT_TAG] - removing every pre-release..."
+          fi
+
+          gh release list \
+            --repo ${{ github.repository }} \
+            --limit 100 \
+            --json tagName,isPrerelease \
+            | jq -r '.[] | select(.isPrerelease == true) | .tagName' \
+            | while read tag; do
+                if [ "$tag" = "$CURRENT_TAG" ]; then
+                  echo "Keeping current pre-release: $tag"
+                elif ! echo "$tag" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-'; then
+                  echo "SKIPPING [$tag] - flagged as a pre-release, but not shaped like one. Refusing to delete it."
+                else
+                  echo "Deleting pre-release: $tag"
+                  gh release delete "$tag" \
+                    --repo ${{ github.repository }} \
+                    --yes \
+                    --cleanup-tag
+                fi
+              done

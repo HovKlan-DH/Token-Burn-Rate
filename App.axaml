@@ -6,5 +6,9 @@
 
     <Application.Styles>
         <FluentTheme />
+        <!-- ColorPicker (Views/ColorPickerWindow.axaml) ships its theme as a resource
+             dictionary in its own assembly, not bundled into FluentTheme - without this the
+             control renders with no palette or hex entry at all. -->
+        <StyleInclude Source="avares://Avalonia.Controls.ColorPicker/Themes/Fluent/Fluent.xaml"/>
     </Application.Styles>
 </Application>

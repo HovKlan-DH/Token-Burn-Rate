@@ -1,40 +1,7 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace TokenBurnRate.Models;
-
-/// <summary>A single billed assistant message pulled from a Claude Code transcript.</summary>
-public readonly record struct UsageRecord(
-    string MessageId,
-    DateTimeOffset Timestamp,
-    string Model,
-    long InputTokens,
-    long OutputTokens,
-    long CacheCreationTokens,
-    long CacheReadTokens)
-{
-    /// <summary>
-    /// Cache reads are deliberately excluded from the headline number. They are billed at a
-    /// small fraction of input rate and dwarf every other figure by ~100x (3.5B vs 44M in a
-    /// month here), so including them would flatten the bars into noise.
-    /// </summary>
-    public long BillableTokens => InputTokens + OutputTokens + CacheCreationTokens;
-
-    public long TotalTokens => BillableTokens + CacheReadTokens;
-}
-
-/// <summary>A usage total over one rolling time window, with the denominator used to fill its bar.</summary>
-public sealed class WindowUsage
-{
-    public required string Label { get; init; }
-    public TimeSpan Window { get; init; }
-    public long Tokens { get; set; }
-    public long Budget { get; set; }
-    public bool HasBudget => Budget > 0;
-
-    public double Fraction => HasBudget ? Math.Clamp((double)Tokens / Budget, 0, 1) : 0;
-    public double Percent => Fraction * 100;
-}
 
 /// <summary>One Copilot quota bucket as reported live by the GitHub endpoint.</summary>
 public sealed class CopilotQuota
@@ -62,7 +29,6 @@ public sealed class CopilotQuota
 public sealed class CopilotStatus
 {
     public string Plan { get; init; } = "unknown";
-    public string Sku { get; init; } = "";
     public IReadOnlyList<string> Organizations { get; init; } = Array.Empty<string>();
     public DateTimeOffset? ResetDate { get; init; }
     public List<CopilotQuota> Quotas { get; init; } = new();
@@ -79,25 +45,37 @@ public sealed class ClaudeLimit
     public required string Label { get; init; }
     /// <summary>Utilization 0-100, straight from the API. Not derived locally.</summary>
     public double Percent { get; init; }
-    public string Severity { get; init; } = "normal";
     public DateTimeOffset? ResetsAt { get; init; }
     public bool IsActive { get; init; }
 
     public double Fraction => Math.Clamp(Percent / 100.0, 0, 1);
 
-    /// <summary>Compact "resets in 4h 8m" style text, or empty when no reset is published.</summary>
+    /// <summary>
+    /// Compact "resets in 4h 8m" style text, or a placeholder when no reset is published -
+    /// a fresh window that has not taken any usage yet has nothing scheduled to reset.
+    ///
+    /// Never empty: UsageBar gives a bar with a caption a slim band and one with none the
+    /// full row height, so an empty string here would render this bar noticeably taller
+    /// than its siblings rather than just missing a line of text.
+    ///
+    /// The figures are wrapped in <see cref="UsageText.Highlight"/> markers: when a limit is
+    /// full, when it comes back is the one thing worth reading in the row, and it is
+    /// otherwise nine-point grey among the words that carry no information.
+    /// </summary>
     public string ResetText
     {
         get
         {
-            if (ResetsAt is not { } r) return "";
+            if (ResetsAt is not { } r) return "not yet started";
             var d = r - DateTimeOffset.UtcNow;
             if (d <= TimeSpan.Zero) return "resetting";
-            if (d.TotalDays >= 1) return $"resets in {(int)d.TotalDays}d {d.Hours}h";
-            if (d.TotalHours >= 1) return $"resets in {(int)d.TotalHours}h {d.Minutes}m";
-            return $"resets in {d.Minutes}m";
+            if (d.TotalDays >= 1) return $"resets in {Em($"{(int)d.TotalDays}d")} {Em($"{d.Hours}h")}";
+            if (d.TotalHours >= 1) return $"resets in {Em($"{(int)d.TotalHours}h")} {Em($"{d.Minutes}m")}";
+            return $"resets in {Em($"{d.Minutes}m")}";
         }
     }
+
+    private static string Em(string s) => UsageText.Highlight(s);
 }
 
 public sealed class ClaudeLimitsStatus
@@ -116,8 +94,6 @@ public sealed class ClaudeLimitsStatus
 /// </summary>
 public sealed class CopilotPacing
 {
-    public required string CreditLabel { get; init; }
-    public double Remaining { get; init; }
     public double Entitlement { get; init; }
     public int BusinessDaysLeft { get; init; }
 

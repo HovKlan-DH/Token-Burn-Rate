@@ -1,48 +1,29 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
-  <!-- TokenBurnRate application icon.
+  <!-- TokenBurnRate application icon: the "quota ring" mark, the same design the tray icon
+       draws live (Services/TrayIconRenderer.cs, Assets/live-ring-icon.md) - a filled arc
+       around a flame, so the static app identity and the live tray icon read as one mark.
 
-       A usage bar burning down like a fuse: the spent track on the right, the
-       remaining fill on the left, and a flame at the burn point.
+       Frozen at 65% in ClaudeAccent orange, which reads as "in use" without looking
+       alarming; the static icon does not track a real bar, only the tray icon does.
+       Assets/icon.ico is generated from this geometry - see the note in the README on
+       regenerating it. -->
 
-       The flame is one solid silhouette rather than layered licks, and the whole
-       group fills ~80% of the tile, because both are what keep the mark readable
-       once Windows scales it to 16-32px. Assets/icon.ico is generated from this
-       geometry — see the note in the README on regenerating it. -->
-  <defs>
-    <linearGradient id="bar" x1="26" y1="0" x2="162" y2="0" gradientUnits="userSpaceOnUse">
-      <stop offset="0"    stop-color="#E8B44A"/>
-      <stop offset="0.55" stop-color="#D97757"/>
-    </linearGradient>
-    <linearGradient id="flame" x1="0" y1="214" x2="0" y2="38" gradientUnits="userSpaceOnUse">
-      <stop offset="0"    stop-color="#D9603F"/>
-      <stop offset="0.45" stop-color="#F0873C"/>
-      <stop offset="1"    stop-color="#FFC24A"/>
-    </linearGradient>
-  </defs>
-
-  <!-- App-coloured ground, matching the widget shell -->
+  <!-- Tile, matching the widget shell -->
   <rect x="0" y="0" width="256" height="256" rx="56" fill="#1A1B1E"/>
 
-  <!-- Spent portion of the fuse: the unfilled track -->
-  <rect x="148" y="186" width="82" height="38" rx="19" fill="#3A3D44"/>
+  <!-- Track ring: the full circle, unfilled -->
+  <circle cx="128" cy="128" r="86" fill="none" stroke="#3A3D44" stroke-width="26"/>
 
-  <!-- Remaining portion: the fill, burning from the right -->
-  <rect x="26" y="186" width="138" height="38" rx="19" fill="url(#bar)"/>
+  <!-- Used arc: 65% of the circle, clockwise from 12 o'clock -->
+  <path d="M 128 42 A 86 86 0 1 1 58.425 178.550"
+        fill="none" stroke="#D97757" stroke-width="26" stroke-linecap="round"/>
 
-  <!-- Flame at the burn point -->
-  <path fill="url(#flame)" d="
-    M146 192
-    C 110 152, 128 100, 170 30
-    C 165 78, 190 88, 192 56
-    C 230 96, 242 148, 220 186
-    C 207 208, 174 214, 155 205
-    C 146 200, 143 196, 146 192 Z"/>
-
-  <!-- Hot core: a hint of heat, dropped below 40px where it turns to mush -->
-  <path fill="#FFE9A8" opacity="0.75" d="
-    M174 194
-    C 163 180, 169 158, 185 134
-    C 184 158, 196 160, 197 148
-    C 210 164, 210 186, 200 197
-    C 191 205, 179 201, 174 194 Z"/>
+  <!-- Flame, centred in the ring -->
+  <path fill="#D97757" transform="translate(64 67) scale(0.5)" d="
+    M128 22
+    C 152 74, 188 96, 188 142
+    C 188 184, 161 214, 128 214
+    C 95 214, 68 184, 68 142
+    C 68 110, 92 98, 102 64
+    C 112 88, 122 78, 128 22 Z"/>
 </svg>

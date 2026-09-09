@@ -109,7 +109,6 @@ public sealed class CopilotUsageService
         var status = new CopilotStatus
         {
             Plan = root.TryGetProperty("copilot_plan", out var p) ? p.GetString() ?? "unknown" : "unknown",
-            Sku = root.TryGetProperty("access_type_sku", out var s2) ? s2.GetString() ?? "" : "",
             Organizations = orgs,
             ResetDate = reset,
         };

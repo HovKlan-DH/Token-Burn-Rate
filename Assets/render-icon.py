@@ -3,16 +3,21 @@
 Kept dependency-free on purpose: neither ImageMagick nor Inkscape is installed on
 the machines this app is built on, and the icon changes too rarely to justify one.
 
-Geometry mirrors Assets/icon.svg, which stays the editable source of truth - edit
-both together. Shapes live in a 256x256 design space and are sampled with
-supersampling; sizes below 40px drop the hot-core highlight, which turns to mush.
+Geometry mirrors Assets/icon.svg and the live tray ring drawn at runtime by
+Services/TrayIconRenderer.cs (see Assets/live-ring-icon.md) - a filled arc around a
+flame, frozen at 65% so the static app identity and the live tray icon read as one
+mark. Edit all three together. Shapes live in a 256x256 design space and are
+sampled with supersampling; sizes below 24px swap the flame for a plain dot, same
+as the live tray icon's small-size cut - the flame turns to mush below that.
 
     python Assets/render-icon.py Assets
 """
+import math
 import struct
 import zlib
 
 W = 256.0
+FRACTION = 0.65
 
 
 # ---------- geometry helpers ----------
@@ -53,32 +58,97 @@ def path(start, curves):
     return pts
 
 
-# ---------- shapes ----------
+def circle(cx, cy, r, n=96):
+    return [(cx + r * math.cos(2 * math.pi * i / n), cy + r * math.sin(2 * math.pi * i / n))
+            for i in range(n)]
+
+
+def ring(cx, cy, r, width, n=96):
+    """An annulus (ring) as a single polygon: outer boundary then inner boundary
+    reversed, which the even-odd fill rule below turns into a hole."""
+    outer = circle(cx, cy, r + width / 2, n)
+    inner = list(reversed(circle(cx, cy, r - width / 2, n)))
+    return outer + [outer[0]] + inner + [inner[0]]
+
+
+def arc_stroke(cx, cy, r, width, fraction, round_cap, n=96):
+    """A clockwise arc from 12 o'clock, stroked to `width`, as a closed polygon.
+    Degenerates to a full ring at fraction >= 1, matching TrayIconRenderer's
+    "a 360-degree arc draws nothing" workaround."""
+    if fraction >= 1:
+        return ring(cx, cy, r, width, n)
+
+    angle = fraction * 360.0
+    steps = max(2, int(n * fraction))
+    outer_r, inner_r = r + width / 2, r - width / 2
+
+    def radial(deg):
+        """Unit vector pointing outward from the centre at `deg` (0 = 12 o'clock,
+        clockwise), and the tangential unit vector 90 degrees clockwise from it -
+        the direction of travel along the arc at that point."""
+        rad = math.radians(deg - 90)
+        rx, ry = math.cos(rad), math.sin(rad)
+        return (rx, ry), (-ry, rx)
+
+    def pt(deg, rr):
+        (rx, ry), _ = radial(deg)
+        return (cx + rr * rx, cy + rr * ry)
+
+    outer = [pt(angle * i / steps, outer_r) for i in range(steps + 1)]
+    inner = [pt(angle * i / steps, inner_r) for i in range(steps + 1)]
+
+    if round_cap:
+        # Semicircular caps at each end, so the stroke end reads the same as
+        # Avalonia's PenLineCap.Round rather than a flat chop. Each cap is a
+        # semicircle centred on the arc's centreline at that endpoint, swept
+        # through the half that bulges away from the stroke body (backward past
+        # the start, forward past the end).
+        cap_r = width / 2
+
+        def cap(deg, forward):
+            (rx, ry), (tx, ty) = radial(deg)
+            base = (cx + r * rx, cy + r * ry)
+            sign = 1 if forward else -1
+            pts = []
+            for i in range(9):
+                # Sweep from the outer edge (+radial) to the inner edge (-radial),
+                # bulging along +/- tangential.
+                a = math.pi * i / 8
+                ox = math.cos(a) * rx + sign * math.sin(a) * tx
+                oy = math.cos(a) * ry + sign * math.sin(a) * ty
+                pts.append((base[0] + cap_r * ox, base[1] + cap_r * oy))
+            return pts
+
+        start_cap = cap(0, forward=False)
+        end_cap = cap(angle, forward=True)
+        return outer + end_cap + list(reversed(inner)) + list(reversed(start_cap))
+    else:
+        return outer + list(reversed(inner))
+
+
+# The fraction the static icon is frozen at - see module docstring.
+TRACK = ring(128, 128, 86, 26)
+ARC = arc_stroke(128, 128, 86, 26, FRACTION, round_cap=True)
+
+# Small-size cut geometry (see Assets/live-ring-icon.md): thicker stroke, square
+# cap, solid dot instead of the flame.
+TRACK_SMALL = ring(128, 128, 88, 34)
+ARC_SMALL = arc_stroke(128, 128, 88, 34, FRACTION, round_cap=False)
+DOT_SMALL = circle(128, 128, 34)
 
 GROUND = rounded_rect(0, 0, 256, 256, 56)
 
-# The fuse sits low in the tile and the flame rises above it, carrying the mass.
-# The bar spans 26..230 and is deliberately chunky: at 16-32px a slim bar drops to
-# a single grey thread, so the whole group is scaled to fill the frame instead.
-TRACK = rounded_rect(148, 186, 82, 38, 19)
-FILL = rounded_rect(26, 186, 138, 38, 19)
+# Flame, scaled 0.5 and translated (64, 67) - identical to TrayIconRenderer.FlameGeometry.
+def flame_point(x, y):
+    return (64 + x * 0.5, 67 + y * 0.5)
 
-# A broad teardrop drawn as one solid mass with a single sharp tip. Detail beyond
-# this disappears below ~32px, so the silhouette carries the whole read.
-FLAME = path((146, 192), [
-    ((110, 152), (128, 100), (170, 30)),
-    ((165, 78), (190, 88), (192, 56)),
-    ((230, 96), (242, 148), (220, 186)),
-    ((207, 208), (174, 214), (155, 205)),
-    ((146, 200), (143, 196), (146, 192)),
-])
 
-# Hot core: small and low, a hint of heat rather than a shape of its own.
-CORE = path((174, 194), [
-    ((163, 180), (169, 158), (185, 134)),
-    ((184, 158), (196, 160), (197, 148)),
-    ((210, 164), (210, 186), (200, 197)),
-    ((191, 205), (179, 201), (174, 194)),
+FLAME = path(flame_point(128, 22), [
+    (flame_point(152, 74), flame_point(188, 96), flame_point(188, 142)),
+    (flame_point(188, 184), flame_point(161, 214), flame_point(128, 214)),
+    (flame_point(95, 214), flame_point(68, 184), flame_point(68, 142)),
+    (flame_point(68, 110), flame_point(92, 98), flame_point(102, 64)),
+    (flame_point(112, 88), flame_point(122, 78), flame_point(128, 22)),
 ])
 
 
@@ -110,49 +180,31 @@ def hexc(h):
     return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
 
 
-def lerp(a, b, t):
-    return tuple(a[i] + (b[i] - a[i]) * t for i in range(3))
-
-
 BG = hexc('1A1B1E')
 TRACKC = hexc('3A3D44')
-CORE_C = hexc('FFE9A8')
-
-BAR_A, BAR_B = hexc('E8B44A'), hexc('D97757')
-FL_0, FL_1, FL_2 = hexc('D9603F'), hexc('F0873C'), hexc('FFC24A')
-
-
-def bar_color(x, y):
-    """Horizontal gradient across the fill bar (x 26..164)."""
-    t = (x - 26) / 136.0
-    t = 0 if t < 0 else 1 if t > 1 else t
-    t = t / 0.55 if t < 0.55 else 1.0
-    return lerp(BAR_A, BAR_B, min(t, 1.0))
-
-
-def flame_color(x, y):
-    """Vertical gradient, from the fuse line (y=214) up to the tip (y=38)."""
-    t = (214 - y) / 176.0
-    t = 0 if t < 0 else 1 if t > 1 else t
-    if t < 0.45:
-        return lerp(FL_0, FL_1, t / 0.45)
-    return lerp(FL_1, FL_2, (t - 0.45) / 0.55)
+ACCENT = hexc('D97757')      # ClaudeAccent
 
 
 # ---------- rasterizer ----------
 
-def render(size, with_core=True, ss=4):
+def render(size, big, ss=4):
     scale = size / W
     px = [[[0.0, 0.0, 0.0, 0.0] for _ in range(size)] for _ in range(size)]
 
-    layers = [
-        ('ground', GROUND, lambda x, y: BG, 1.0),
-        ('track', TRACK, lambda x, y: TRACKC, 1.0),
-        ('fill', FILL, bar_color, 1.0),
-        ('flame', FLAME, flame_color, 1.0),
-    ]
-    if with_core:
-        layers.append(('core', CORE, lambda x, y: CORE_C, 0.75))
+    if big:
+        layers = [
+            ('ground', GROUND, lambda x, y: BG, 1.0),
+            ('track', TRACK, lambda x, y: TRACKC, 1.0),
+            ('arc', ARC, lambda x, y: ACCENT, 1.0),
+            ('flame', FLAME, lambda x, y: ACCENT, 1.0),
+        ]
+    else:
+        layers = [
+            ('ground', GROUND, lambda x, y: BG, 1.0),
+            ('track', TRACK_SMALL, lambda x, y: TRACKC, 1.0),
+            ('arc', ARC_SMALL, lambda x, y: ACCENT, 1.0),
+            ('dot', DOT_SMALL, lambda x, y: ACCENT, 1.0),
+        ]
 
     boxes = {name: bbox(poly) for name, poly, _, _ in layers}
 
@@ -238,13 +290,13 @@ if __name__ == '__main__':
     sizes = [16, 20, 24, 32, 40, 48, 64, 128, 256]
     entries = []
     for s in sizes:
-        core = s >= 40
+        big = s >= 24
         ss = 4 if s > 64 else 6
-        pxm = render(s, with_core=core, ss=ss)
+        pxm = render(s, big=big, ss=ss)
         blob = png_bytes(pxm)
         entries.append((s, blob))
         if s in (16, 32, 48, 128, 256):
             open(os.path.join(outdir, 'icon-%d.png' % s), 'wb').write(blob)
-        print('rendered %3d %s %6d bytes' % (s, 'core' if core else 'flat', len(blob)), flush=True)
+        print('rendered %3d %s %6d bytes' % (s, 'flame' if big else 'dot', len(blob)), flush=True)
     write_ico(os.path.join(outdir, 'icon.ico'), entries)
     print('ico written')
