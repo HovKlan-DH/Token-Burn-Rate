@@ -232,7 +232,7 @@ you see.
 
 Nothing needs installing for (3): click **Sign in to GitHub**, and the widget shows a short
 code and opens `github.com/login/device`. Enter the code once and it stores the token in
-`%APPDATA%\TokenBurnRate\github.json`, readable only by your user. This is GitHub's standard
+`%LOCALAPPDATA%\TokenBurnRate\github.json`, readable only by your user. This is GitHub's standard
 OAuth device flow — no admin rights, no CLI, no client secret. The requested scope is
 `read:user`, the least privilege that still answers the Copilot quota endpoint.
 
@@ -248,7 +248,7 @@ to sign in.
 ## State file
 
 The app keeps its state in a single JSON file. An installed build writes it to
-`%APPDATA%\TokenBurnRate\` (and the platform equivalent elsewhere), so it survives the
+`%LOCALAPPDATA%\TokenBurnRate\` (and the platform equivalent elsewhere), so it survives the
 auto-updates that replace the versioned program folder. A build run straight from a publish
 folder instead writes **next to the executable, named after it** - `TokenBurnRate.exe`
 writes `TokenBurnRate.json` - so a copied folder carries its spending history with it:
@@ -302,7 +302,7 @@ nothing for that risk.
 and never corrected on your behalf; the risk above is simply yours to take.
 
 If the executable's own folder cannot be written - a read-only network share, or
-`Program Files` - the file falls back to `%APPDATA%\TokenBurnRate\TokenBurnRate.json`, so
+`Program Files` - the file falls back to `%LOCALAPPDATA%\TokenBurnRate\TokenBurnRate.json`, so
 tracking keeps working rather than silently losing each day's opening balance.
 
 The GitHub token is deliberately **not** kept here. It stays in

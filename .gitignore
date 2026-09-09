@@ -76,7 +76,7 @@ publish/
 # repo root whenever the app is run from a source build. It holds this machine's window
 # position and its spending history - never something to publish. The GitHub token is not
 # covered here because it deliberately never lives beside the executable; it stays in
-# %APPDATA% with owner-only permissions.
+# %LOCALAPPDATA% with owner-only permissions.
 /TokenBurnRate.json
 
 # Crash reports written beside the executable

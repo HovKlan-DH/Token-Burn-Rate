@@ -35,7 +35,7 @@ being used to develop on.
 VS Code having Copilot signed in says nothing about the widget: VS Code keeps its own
 session encrypted in the OS credential store (DPAPI), which is neither reachable nor
 appropriate to reuse. Token order is env var → `gh` if present → the widget's own
-device-flow token in `%APPDATA%\TokenBurnRate\github.json`.
+device-flow token in `%LOCALAPPDATA%\TokenBurnRate\github.json`.
 
 **How to apply:** Detect plan/org from the endpoint at runtime and hide or dim what is
 unavailable — no per-machine config file. Never require a CLI install for the app to work. When testing Copilot changes at home, exercise

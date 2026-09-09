@@ -139,7 +139,7 @@ public sealed class GitHubDeviceAuth
         get
         {
             var dir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "TokenBurnRate");
             Directory.CreateDirectory(dir);
             return Path.Combine(dir, "github.json");

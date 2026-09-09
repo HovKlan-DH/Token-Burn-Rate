@@ -94,7 +94,7 @@ public static class UpdateService
         }
     }
 
-    // TEMPORARY: mirrors CrashLog's beside-the-exe/%APPDATA% fallback so this shows up next
+    // TEMPORARY: mirrors CrashLog's beside-the-exe/%LOCALAPPDATA% fallback so this shows up next
     // to the crash logs the user already knows to look for. Remove alongside the DiagLog
     // calls above once the Linux/AppImage no-update issue is root-caused.
     private static void DiagLog(string message)

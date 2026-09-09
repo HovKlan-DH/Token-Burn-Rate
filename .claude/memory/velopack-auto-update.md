@@ -36,7 +36,10 @@ keyed off `Environment.ProcessPath` silently loses its target on each update:
 
 - `Services/AppState.cs` would have written the state file beside that exe and lost all
   pacing history per update — it now detects the install (a `.velopack` directory one level
-  up) and uses `%APPDATA%` instead.
+  up) and uses `%LOCALAPPDATA%` (`SpecialFolder.LocalApplicationData`, i.e. `~/.local/share`
+  on Linux/macOS — not `ApplicationData`/`~/.config`, which the app used at first and which
+  matched Windows only by coincidence, since both map to the same roaming folder there)
+  instead.
 - `Services/AutostartService.cs` registered the versioned exe path, which would stop
   resolving after an update — it now registers Velopack's stable stub one level up.
 

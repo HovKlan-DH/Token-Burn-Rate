@@ -77,7 +77,7 @@ public static class CrashLog
 
     /// <summary>
     /// <c>{exename}.crash.{yyyyMMddHHmmss}.log</c> beside the executable, falling back to
-    /// the same %APPDATA% folder the state file uses when that directory is read-only.
+    /// the same %LOCALAPPDATA% folder the state file uses when that directory is read-only.
     /// </summary>
     private static string BuildPath()
     {

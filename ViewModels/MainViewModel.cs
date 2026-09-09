@@ -1155,7 +1155,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// Opens the folder AppState.Path writes the state file into, in the OS file browser -
     /// the same folder CrashLog drops its logs beside. That is the executable's own folder
     /// for a portable copy, but for a Velopack install (where the exe's folder is a
-    /// versioned, unwritable app-x.y.z directory) it is %APPDATA%/~/.config instead - so
+    /// versioned, unwritable app-x.y.z directory) it is %LOCALAPPDATA%/~/.local/share instead - so
     /// this must follow AppState's resolution rather than assuming beside-the-exe.
     /// </summary>
     public void OpenApplicationFolder()
@@ -1727,9 +1727,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
         // Read from the state already in hand rather than loading the file a second time,
         // and from here rather than a static initializer: the fallback path puts this file
-        // on %APPDATA%, possibly a network share, and file I/O on the class-load path both
-        // blocks window construction and turns any failure into a permanently unusable
-        // type for the rest of the process.
+        // on %LOCALAPPDATA%, possibly a network share, and file I/O on the class-load path
+        // both blocks window construction and turns any failure into a permanently
+        // unusable type for the rest of the process.
         ResolveRefreshInterval(state);
         ResolveIconConfig(state);
         ResolveColors(state);

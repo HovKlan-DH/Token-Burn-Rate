@@ -10,11 +10,15 @@ namespace TokenBurnRate.Services;
 /// beside it, so a portable copy carries its history with it.
 ///
 /// If that folder cannot be written - a read-only share, or Program Files - the file falls
-/// back to %APPDATA%, because losing every day's opening balance would break the pacing
-/// bars entirely. The GitHub token deliberately does not live here: it stays in %APPDATA%
-/// with owner-only permissions, since a portable folder may be a USB stick or a share.
+/// back to the per-user local app data folder (%LOCALAPPDATA% / ~/.local/share, via
+/// SpecialFolder.LocalApplicationData - not ApplicationData/~/.config, which is for
+/// roaming config rather than an app's own data, and is where Windows and Linux otherwise
+/// diverge), because losing every day's opening balance would break the pacing bars
+/// entirely. The GitHub token deliberately does not live here: it stays in that same
+/// per-user folder with owner-only permissions, since a portable folder may be a USB stick
+/// or a share.
 ///
-/// A Velopack install also uses %APPDATA% rather than the beside-the-exe location: there
+/// A Velopack install also uses that folder rather than the beside-the-exe location: there
 /// the exe lives in a versioned "current"/"app-x.y.z" folder that each update replaces
 /// wholesale, so state written beside it would be discarded on every auto-update.
 /// </summary>
@@ -195,7 +199,7 @@ public sealed class AppState
         }
 
         var appData = System.IO.Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "TokenBurnRate");
         Directory.CreateDirectory(appData);
         return System.IO.Path.Combine(appData, "TokenBurnRate.json");
