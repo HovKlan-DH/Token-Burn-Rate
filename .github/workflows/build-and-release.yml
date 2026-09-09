@@ -7,11 +7,13 @@ name: Build, Scan and Release
 # that fails the build gate leaves nothing behind to clean up, and the same version
 # number can simply be re-run once the fix is pushed.
 #
-# The version is not typed in here - it is read from Version in TokenBurnRate.csproj,
-# the same property baked into the published assembly. Bumping that property before
-# running this workflow is the only place a release version is entered. Pre-release
-# status follows semver: a version with a "-" (e.g. "1.1.0-beta.1") is a pre-release, a
-# bare "X.Y.Z" is a full release.
+# The version is not typed in here - it is read from InformationalVersion in
+# TokenBurnRate.csproj, the same property the running app reports. AssemblyVersion
+# stays purely numeric (assembly metadata rejects a "-alpha.2" suffix), so
+# InformationalVersion is the one property that carries the real, possibly-suffixed
+# release version - see the csproj. Bumping it before running this workflow is the only
+# place a release version is entered. Pre-release status follows semver: a version with
+# a "-" (e.g. "1.1.0-beta.1") is a pre-release, a bare "X.Y.Z" is a full release.
 #
 # Mirrors the sibling Classic-Repair-Toolbox workflow (same account, same self-hosted
 # YubiKey runner) but scaled to what this project actually is: four portable
@@ -53,7 +55,7 @@ jobs:
       - name: Read version from project
         id: ver
         run: |
-          VERSION=$(dotnet msbuild ${{ env.PROJECT }} -getProperty:Version -nologo)
+          VERSION=$(dotnet msbuild ${{ env.PROJECT }} -getProperty:InformationalVersion -nologo)
           echo "Read version: $VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           if [[ "$VERSION" == *"-"* ]]; then

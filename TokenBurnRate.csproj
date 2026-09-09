@@ -15,13 +15,15 @@
     <Product>$(AssemblyName)</Product>
     <Description>Live Claude Code and GitHub Copilot usage.</Description>
     <Copyright>©2026 Dennis Helligsø</Copyright>
-	  
-    <Version>0.1.0</Version>
-    <!--
-    <InformationalVersion>$(AssemblyVersion)</InformationalVersion>
-    -->
+	<FileVersion>$(AssemblyVersion)</FileVersion>
+	<Version>$(InformationalVersion)</Version>
+
+	<AssemblyVersion>0.1.0</AssemblyVersion>
     <InformationalVersion>0.1.0-alpha.2</InformationalVersion>
-	  
+	<!--
+	<InformationalVersion>$(AssemblyVersion</InformationalVersion>
+	-->
+
   </PropertyGroup>
 
   <!-- Portable single-file publish. Trimming is intentionally OFF:
