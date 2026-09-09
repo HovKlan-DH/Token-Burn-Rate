@@ -95,7 +95,12 @@ jobs:
   ###############################################################
   # CODEQL SECURITY SCAN
   ###############################################################
+  # Disabled for now: this repo is private, and CodeQL's SARIF upload requires GitHub
+  # Advanced Security, which is free for public repos but not for private ones. The plan
+  # is to make the repo public later, at which point flipping this "if" back on (and
+  # restoring security-scan to create-release's "needs" below) is the only change needed.
   security-scan:
+    if: false
     name: CodeQL security scan
     runs-on: ubuntu-latest
     permissions:
@@ -269,7 +274,9 @@ jobs:
   create-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [determine-version, build-windows, build-linux, build-macos, security-scan]
+    # security-scan is disabled (see its "if: false") until the repo goes public, so it
+    # is deliberately left out of this list rather than depended on while skipped.
+    needs: [determine-version, build-windows, build-linux, build-macos]
     permissions:
       contents: write
     steps:
