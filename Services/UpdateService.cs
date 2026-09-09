@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Velopack;
 using Velopack.Sources;
@@ -20,15 +21,39 @@ public static class UpdateService
     private const string RepoUrl = "https://github.com/HovKlan-DH/TokenBurnRate";
 
     /// <summary>
-    /// Opt-in flag: without it, only real (non-pre-release) versions are offered, so a user
-    /// on a stable build stays on stable builds. Read directly from
-    /// <see cref="Environment.GetCommandLineArgs"/> rather than threaded in from
-    /// <c>Main(string[] args)</c>, since <see cref="CheckOnLaunch"/> is called parameterless
-    /// from MainWindow's Opened handler.
+    /// The three release tiers CI ever tags, in ascending stability - see
+    /// determine-version's is_prerelease step and prerelease_check's stage labels in
+    /// build-and-release.yml. There is deliberately no "rc" tier: alpha, beta, and a bare
+    /// release are the only stages this project uses.
     /// </summary>
-    private static bool PrereleaseRequested =>
-        Array.Exists(Environment.GetCommandLineArgs(),
-            a => string.Equals(a, "--update-prerelease", StringComparison.OrdinalIgnoreCase));
+    private enum Tier { Release, Beta, Alpha }
+
+    /// <summary>
+    /// Opt-in flags widening what counts as an update, read from the given argv rather
+    /// than threaded in from <c>Main(string[] args)</c>, since <see cref="CheckOnLaunch"/>
+    /// is called parameterless from MainWindow's Opened handler. Without either, only real
+    /// (non-pre-release) versions are offered, so a user on a stable build stays on stable
+    /// builds. --update-include-alpha implies beta too: alpha is the least stable tier, so
+    /// wanting it means wanting anything at least as stable as well.
+    /// </summary>
+    private static Tier MaxTierRequested(string[] args)
+    {
+        if (args.Contains("--update-include-alpha", StringComparer.OrdinalIgnoreCase)) return Tier.Alpha;
+        if (args.Contains("--update-include-beta", StringComparer.OrdinalIgnoreCase)) return Tier.Beta;
+        return Tier.Release;
+    }
+
+    /// <summary>
+    /// Where a candidate version's release label places it. Matches the tags CI ever
+    /// produces (-alpha.N, -beta.N, or none) - anything else unrecognised is treated as the
+    /// least trusted tier rather than silently accepted.
+    /// </summary>
+    private static Tier TierOf(Velopack.SemanticVersion version)
+    {
+        if (!version.IsPrerelease) return Tier.Release;
+        var label = version.ReleaseLabels.FirstOrDefault() ?? "";
+        return label.Equals("beta", StringComparison.OrdinalIgnoreCase) ? Tier.Beta : Tier.Alpha;
+    }
 
     public static void CheckOnLaunch()
     {
@@ -39,15 +64,19 @@ public static class UpdateService
     {
         try
         {
+            var args = Environment.GetCommandLineArgs();
+            var maxTier = MaxTierRequested(args);
+
             // TEMPORARY diagnostics while chasing why Linux/AppImage never updates - remove
             // once that's root-caused. Writes unconditionally (not just on error) so a
             // silent early-return is visible too.
-            DiagLog($"start: prerelease={PrereleaseRequested}, argv={string.Join(' ', Environment.GetCommandLineArgs())}");
+            DiagLog($"start: maxTier={maxTier}, argv={string.Join(' ', args)}");
 
-            // Pre-releases only count as updates when --update-prerelease is passed; every
-            // release so far being an alpha means the default (stable-only) has nothing to
-            // update to until the first bare X.Y.Z ships, which is expected.
-            var manager = new UpdateManager(new GithubSource(RepoUrl, accessToken: null, prerelease: PrereleaseRequested));
+            // Ask the source for the widest pool (every tier CI ever tags) and then filter
+            // by parsed version label ourselves - GithubSource's own "prerelease" switch is
+            // a single bool and cannot distinguish alpha from beta, but every release CI
+            // makes still has a plain semver label to read that distinction back out of.
+            var manager = new UpdateManager(new GithubSource(RepoUrl, accessToken: null, prerelease: true));
 
             DiagLog($"IsInstalled={manager.IsInstalled}, CurrentVersion={manager.CurrentVersion}");
 
@@ -61,10 +90,24 @@ public static class UpdateService
             }
 
             var update = await manager.CheckForUpdatesAsync().ConfigureAwait(false);
-            DiagLog(update is null
-                ? "stopping: CheckForUpdatesAsync returned null (no update found)"
-                : $"update found: {update.TargetFullRelease.Version}");
-            if (update is null) return;
+            if (update is null)
+            {
+                DiagLog("stopping: CheckForUpdatesAsync returned null (no update found)");
+                return;
+            }
+
+            var candidateTier = TierOf(update.TargetFullRelease.Version);
+            if (candidateTier > maxTier)
+            {
+                // A newer build exists but is a less stable tier than requested - e.g. the
+                // latest published release is an alpha and neither flag was passed. Superseded
+                // releases are deleted by the workflow, so there is no older, allowed release
+                // to fall back to instead; this is simply "nothing to update to right now".
+                DiagLog($"stopping: candidate {update.TargetFullRelease.Version} is tier {candidateTier}, above requested max {maxTier}");
+                return;
+            }
+
+            DiagLog($"update found: {update.TargetFullRelease.Version} (tier {candidateTier})");
 
             await manager.DownloadUpdatesAsync(update).ConfigureAwait(false);
             DiagLog("download complete, applying and restarting");

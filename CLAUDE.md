@@ -49,10 +49,13 @@ GitHub Releases. Full rationale and the tradeoffs behind it:
 - `Services/UpdateService.cs` checks GitHub Releases on every launch and, if a newer
   version exists, downloads and applies it **silently**, then restarts — no dialog, no
   menu interaction. This was a deliberate choice over a "click to install" flow.
-- By default only real (non-pre-release) versions are offered. Pass `--update-prerelease`
-  on the command line to opt into the newest pre-release instead. Since every release so
-  far is an alpha, a default launch currently has nothing to update to until the first
-  bare X.Y.Z ships — that's expected, not a bug.
+- By default only real (bare `X.Y.Z`) versions are offered. `--update-include-beta` widens
+  that to also accept `-beta.N` builds; `--update-include-alpha` widens it further to also
+  accept `-alpha.N` (there is deliberately no `-rc` tier — CI's version scheme only ever
+  produces alpha, beta, or a bare release). Each flag includes everything at least as
+  stable as it names — alpha implies beta implies release. Since every release so far is an
+  alpha, a default launch currently has nothing to update to until the first bare X.Y.Z
+  ships — that's expected, not a bug.
 - CI ([.github/workflows/build-and-release.yml](.github/workflows/build-and-release.yml))
   runs `dotnet publish` into an unpacked folder per RID, then `vpk pack` turns that into
   the single downloadable file users actually get (`Setup.exe` / `.AppImage` / `Setup.pkg`),
