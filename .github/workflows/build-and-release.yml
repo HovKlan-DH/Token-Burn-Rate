@@ -83,8 +83,14 @@ jobs:
       - name: Restore
         run: dotnet restore ${{ env.SOLUTION }}
 
+      # SelfContained is forced on for Release in the csproj (see its comment), which
+      # makes a plain "dotnet build -c Release" resolve a RuntimeIdentifier from the
+      # build machine itself - linux-x64 here - that the restore above never fetched,
+      # since restore ran without -c Release and picked up no RID at all. This gate only
+      # needs to prove the code compiles, so self-contained resolution is turned back off
+      # rather than restoring per-RID for a build whose output is discarded anyway.
       - name: Build (Release)
-        run: dotnet build ${{ env.SOLUTION }} -c Release --no-restore
+        run: dotnet build ${{ env.SOLUTION }} -c Release --no-restore -p:SelfContained=false
 
   ###############################################################
   # CODEQL SECURITY SCAN
