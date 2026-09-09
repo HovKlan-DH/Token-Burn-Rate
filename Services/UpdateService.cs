@@ -1,0 +1,68 @@
+using System;
+using System.Threading.Tasks;
+using Velopack;
+using Velopack.Sources;
+
+namespace TokenBurnRate.Services;
+
+/// <summary>
+/// Checks GitHub Releases for a newer Velopack-packaged build and, if one exists,
+/// downloads and applies it, restarting into the new version.
+///
+/// Runs once per launch, fire-and-forget, the same shape as <see cref="CheckInService"/>:
+/// a failure here (offline, rate-limited, running unpackaged under `dotnet run`) must never
+/// delay startup or surface an error the user cannot act on. There is no user-facing
+/// prompt - the update simply appears the next time the widget starts.
+/// </summary>
+public static class UpdateService
+{
+    private const string RepoUrl = "https://github.com/HovKlan-DH/TokenBurnRate";
+
+    public static void CheckOnLaunch()
+    {
+        _ = CheckOnLaunchAsync();
+    }
+
+    private static async Task CheckOnLaunchAsync()
+    {
+        try
+        {
+            // Pre-releases count as updates: every release so far is an alpha, and the
+            // workflow deletes superseded ones, so the newest pre-release is simply the
+            // newest build. Excluding them would mean nothing to update to at all until
+            // the first bare X.Y.Z ships.
+            var manager = new UpdateManager(new GithubSource(RepoUrl, accessToken: null, prerelease: true));
+
+            // Throws when running from a build vpk never packaged (e.g. `dotnet run`, or a
+            // manually-copied publish folder) - exactly the case where there is nothing
+            // sensible to update, so it is treated the same as "no update found".
+            if (!manager.IsInstalled) return;
+
+            var update = await manager.CheckForUpdatesAsync().ConfigureAwait(false);
+            if (update is null) return;
+
+            await manager.DownloadUpdatesAsync(update).ConfigureAwait(false);
+
+            // TrayNotifier keeps unsynchronised static Win32 handles and is otherwise only
+            // ever called from the UI thread (minimise-to-tray); the awaits above left this
+            // on a thread-pool thread, so hop back rather than race it. Awaited so the
+            // balloon is actually queued with the shell before the restart below kills the
+            // process out from under it.
+            if (TrayNotifier.IsSupported)
+            {
+                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                    TrayNotifier.Show("TokenBurnRate update installed",
+                                      "Restarting to finish updating..."));
+            }
+
+            manager.ApplyUpdatesAndRestart(update);
+        }
+        catch (Exception ex)
+        {
+            // Offline, GitHub rate limit, unpackaged dev build: none of it should affect the
+            // widget, and there is nothing actionable to tell the user. Recorded rather than
+            // silently dropped so a "never updates" report has something to go on.
+            CrashLog.Record(ex, "update check");
+        }
+    }
+}

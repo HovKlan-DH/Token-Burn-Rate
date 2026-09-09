@@ -1,5 +1,6 @@
 ﻿using Avalonia;
 using System;
+using Velopack;
 
 namespace TokenBurnRate
 {
@@ -16,6 +17,12 @@ namespace TokenBurnRate
 
             try
             {
+                // Must run before Avalonia: on first launch after an update this is what
+                // finishes install/uninstall/update bookkeeping and, for some verbs, exits
+                // the process immediately without ever starting the UI. Inside the try so a
+                // failure here is recorded the same as any other startup crash.
+                VelopackApp.Build().Run();
+
                 BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
             }
             catch (Exception ex)

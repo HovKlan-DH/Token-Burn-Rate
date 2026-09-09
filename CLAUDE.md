@@ -1,7 +1,8 @@
 # TokenBurnRate
 
 Avalonia always-on-top widget showing live Claude Code and GitHub Copilot usage,
-published as one self-contained executable per OS (win-x64, linux-x64, osx-arm64, osx-x64).
+packaged with Velopack as one installer per OS (win-x64, linux-x64, osx-arm64, osx-x64)
+that self-updates — see [Update mechanism](#update-mechanism).
 
 ## Working agreement
 
@@ -32,10 +33,37 @@ Durable findings live in [.claude/memory/](.claude/memory/) — read
 - `Grid.ColumnDefinitions` cannot be bound in Avalonia — the bars are a custom-drawn
   `UsageBar` control ([Views/UsageBar.cs](Views/UsageBar.cs)) that derives fill from its own
   measured width.
+- **`vpk pack` needs an unpacked publish folder, not a single-file exe.** That's why the
+  csproj carries no `PublishSingleFile` — see [Update mechanism](#update-mechanism) for what
+  replaced it. Don't re-add single-file publishing without also removing Velopack.
+
+## Update mechanism
+
+Packaging switched from a raw self-contained single-file exe per OS to a
+[Velopack](https://velopack.io)-packaged installer per OS, so the app can auto-update from
+GitHub Releases. Full rationale and the tradeoffs behind it:
+[.claude/memory/velopack-auto-update.md](.claude/memory/velopack-auto-update.md).
+
+- `Program.cs` runs `VelopackApp.Build().Run()` before anything else — required even in
+  dev builds (`dotnet run`), where it's a no-op since Velopack finds no installed location.
+- `Services/UpdateService.cs` checks GitHub Releases on every launch and, if a newer
+  version exists, downloads and applies it **silently**, then restarts — no dialog, no
+  menu interaction. This was a deliberate choice over a "click to install" flow.
+- CI ([.github/workflows/build-and-release.yml](.github/workflows/build-and-release.yml))
+  runs `dotnet publish` into an unpacked folder per RID, then `vpk pack` turns that into
+  the single downloadable file users actually get (`Setup.exe` / `.AppImage` / `Setup.pkg`),
+  plus the `.nupkg` and `releases.*.json`/`assets.*.json` feed files the update check reads.
+  The macOS `.icns` icon is generated at CI time via `iconutil` from the existing
+  `Assets/icon-*.png` set — there's no separate `.icns` source file to maintain.
 
 ## Build
 
 ```bash
-./build-all.sh    # all four targets
+./build-all.sh    # publishes the unpacked folder per OS - vpk pack's input, not a final exe
 dotnet build      # local debug
 ```
+
+`build-all.sh`'s output is not what end users download; the CI workflow above is what
+produces the actual installer via `vpk pack`. There is no local one-liner for that step —
+run it by hand (`vpk pack --packId TokenBurnRate ...`) against a `publish/<rid>` folder if
+you need to test packaging locally.

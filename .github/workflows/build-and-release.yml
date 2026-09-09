@@ -16,14 +16,17 @@ name: Build, Scan and Release
 # a "-" (e.g. "1.1.0-beta.1") is a pre-release, a bare "X.Y.Z" is a full release.
 #
 # Mirrors the sibling Classic-Repair-Toolbox workflow (same account, same self-hosted
-# YubiKey runner) but scaled to what this project actually is: four portable
-# self-contained executables, no installer, no auto-update feed and no test suite - so
-# there is no Velopack packaging step and no unit-test gate here.
+# YubiKey runner). Both now package with Velopack: each RID is published unpacked and
+# handed to `vpk pack`, which produces the single downloadable installer (Setup.exe /
+# .AppImage / Setup.pkg) plus the .nupkg and releases feed JSON that Services/UpdateService.cs
+# reads at runtime. There is still no unit-test gate here - see build-check below, which
+# takes its place.
 #
 on:
   workflow_dispatch:
 
 env:
+  PACK_ID: TokenBurnRate
   EXE_WINDOWS: TokenBurnRate.exe
   EXE_UNIX: TokenBurnRate
   PROJECT: TokenBurnRate.csproj
@@ -171,17 +174,42 @@ jobs:
             --alg SHA-256 `
             publish/win-x64/${{ env.EXE_WINDOWS }}
 
-      - name: Prepare release asset
+      - name: Install vpk
+        shell: powershell
+        run: dotnet tool install -g vpk
+
+      - name: Pack with Velopack
         shell: powershell
         run: |
-          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
-          Copy-Item publish/win-x64/${{ env.EXE_WINDOWS }} release-assets/TokenBurnRate-win-x64.exe -Force
+          vpk pack `
+            --packId ${{ env.PACK_ID }} `
+            --packVersion ${{ needs.determine-version.outputs.version }} `
+            --packDir publish/win-x64 `
+            --mainExe ${{ env.EXE_WINDOWS }} `
+            --channel win `
+            --noPortable `
+            --icon "Assets/icon.ico" `
+            --packTitle "TokenBurnRate" `
+            --outputDir velopack-output
 
-      - name: Upload artifact
+      - name: Sign Velopack installer
+        shell: powershell
+        env:
+          YUBIKEY_PIN: ${{ secrets.YUBIKEY_PIN }}
+        run: |
+          $installer = Get-ChildItem velopack-output\*-Setup.exe | Select-Object -First 1
+          java -jar C:\tools\jsign-6.0.jar `
+            --storetype YUBIKEY `
+            --storepass "$env:YUBIKEY_PIN" `
+            --tsaurl http://timestamp.digicert.com `
+            --alg SHA-256 `
+            $installer.FullName
+
+      - name: Upload Velopack artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: release-win-x64
-          path: release-assets/*
+          name: velopack-win-x64
+          path: velopack-output/*
 
   ###############################################################
   # LINUX BUILD (x64, self-contained)
@@ -209,17 +237,26 @@ jobs:
             -p:Version=${{ needs.determine-version.outputs.version }} \
             -o publish/linux-x64
 
-      - name: Prepare release asset
-        run: |
-          mkdir -p release-assets
-          cp publish/linux-x64/${{ env.EXE_UNIX }} release-assets/TokenBurnRate-linux-x64
-          chmod +x release-assets/TokenBurnRate-linux-x64
+      - name: Install vpk
+        run: dotnet tool install -g vpk
 
-      - name: Upload artifact
+      - name: Pack with Velopack
+        run: |
+          vpk pack \
+            --packId ${{ env.PACK_ID }} \
+            --packTitle "TokenBurnRate" \
+            --packVersion ${{ needs.determine-version.outputs.version }} \
+            --packDir publish/linux-x64 \
+            --mainExe ${{ env.EXE_UNIX }} \
+            --channel linux \
+            --icon "Assets/icon-256.png" \
+            --outputDir velopack-output
+
+      - name: Upload Velopack artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: release-linux-x64
-          path: release-assets/*
+          name: velopack-linux-x64
+          path: velopack-output/*
 
   ###############################################################
   # MACOS BUILD (arm64 + x64, self-contained)
@@ -257,18 +294,56 @@ jobs:
             -p:Version=${{ needs.determine-version.outputs.version }} \
             -o publish/osx-x64
 
-      - name: Prepare release assets
+      # No .icns is committed to the repo - the runner's own iconutil builds one from the
+      # PNGs Assets/render-icon.py already produces, rather than adding a second binary
+      # icon format to maintain alongside icon.ico. Missing the 512px sizes iconutil wants
+      # is harmless: the icon simply tops out at the largest size actually supplied.
+      - name: Build .icns from existing PNGs
         run: |
-          mkdir -p release-assets
-          cp publish/osx-arm64/${{ env.EXE_UNIX }} release-assets/TokenBurnRate-osx-arm64
-          cp publish/osx-x64/${{ env.EXE_UNIX }} release-assets/TokenBurnRate-osx-x64
-          chmod +x release-assets/TokenBurnRate-osx-arm64 release-assets/TokenBurnRate-osx-x64
+          mkdir icon.iconset
+          cp Assets/icon-16.png  icon.iconset/icon_16x16.png
+          cp Assets/icon-32.png  icon.iconset/icon_16x16@2x.png
+          cp Assets/icon-32.png  icon.iconset/icon_32x32.png
+          cp Assets/icon-128.png icon.iconset/icon_32x32@2x.png
+          cp Assets/icon-128.png icon.iconset/icon_128x128.png
+          cp Assets/icon-256.png icon.iconset/icon_128x128@2x.png
+          cp Assets/icon-256.png icon.iconset/icon_256x256.png
+          iconutil -c icns icon.iconset -o Assets/icon.icns
 
-      - name: Upload artifact
+      - name: Install vpk
+        run: dotnet tool install -g vpk
+
+      - name: Pack with Velopack (macOS arm64)
+        run: |
+          vpk pack \
+            --packId ${{ env.PACK_ID }} \
+            --packTitle "TokenBurnRate" \
+            --packVersion ${{ needs.determine-version.outputs.version }} \
+            --packDir publish/osx-arm64 \
+            --mainExe ${{ env.EXE_UNIX }} \
+            --channel osx-arm64 \
+            --noPortable \
+            --icon "Assets/icon.icns" \
+            --outputDir velopack-output
+
+      - name: Pack with Velopack (macOS x64)
+        run: |
+          vpk pack \
+            --packId ${{ env.PACK_ID }} \
+            --packTitle "TokenBurnRate" \
+            --packVersion ${{ needs.determine-version.outputs.version }} \
+            --packDir publish/osx-x64 \
+            --mainExe ${{ env.EXE_UNIX }} \
+            --channel osx-x64 \
+            --noPortable \
+            --icon "Assets/icon.icns" \
+            --outputDir velopack-output
+
+      - name: Upload Velopack artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: release-macos
-          path: release-assets/*
+          name: velopack-macos
+          path: velopack-output/*
 
   ###############################################################
   # CREATE GITHUB RELEASE
@@ -285,7 +360,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Download all release artifacts
+      - name: Download all Velopack artifacts
         uses: actions/download-artifact@v8
         with:
           path: release-assets
@@ -340,19 +415,23 @@ jobs:
             ${{ steps.prerelease_check.outputs.is_prerelease == 'true' && format('This is a {0} version, and should not be downloaded/used unless if coordinated with the developer.', steps.prerelease_check.outputs.body_label) || format('### Direct downloads for different platforms
             | Platform | File |
             |----------|------|
-            | Windows (x64) | [TokenBurnRate-win-x64.exe](https://github.com/{0}/releases/download/{1}/TokenBurnRate-win-x64.exe) |
-            | Linux (x64) | [TokenBurnRate-linux-x64](https://github.com/{0}/releases/download/{1}/TokenBurnRate-linux-x64) |
-            | macOS Apple Silicon (arm64) | [TokenBurnRate-osx-arm64](https://github.com/{0}/releases/download/{1}/TokenBurnRate-osx-arm64) |
-            | macOS Intel (x64) | [TokenBurnRate-osx-x64](https://github.com/{0}/releases/download/{1}/TokenBurnRate-osx-x64) |
+            | Windows (x64) | [TokenBurnRate-win-Setup.exe](https://github.com/{0}/releases/download/{1}/TokenBurnRate-win-Setup.exe) |
+            | Linux (x64) | [TokenBurnRate.AppImage](https://github.com/{0}/releases/download/{1}/TokenBurnRate.AppImage) |
+            | macOS Apple Silicon (arm64) | [TokenBurnRate-osx-arm64-Setup.pkg](https://github.com/{0}/releases/download/{1}/TokenBurnRate-osx-arm64-Setup.pkg) |
+            | macOS Intel (x64) | [TokenBurnRate-osx-x64-Setup.pkg](https://github.com/{0}/releases/download/{1}/TokenBurnRate-osx-x64-Setup.pkg) |
 
-            The Windows executable is code-signed. Each is a single self-contained portable file - no installer, no runtime to install separately.', github.repository, steps.tag.outputs.tag) }}
+            The Windows and macOS installers are code-signed. Each is installed once per-user
+            (no administrator rights needed); after that the widget checks for updates on
+            every launch and updates itself automatically.', github.repository, steps.tag.outputs.tag) }}
           draft: false
           prerelease: ${{ steps.prerelease_check.outputs.is_prerelease == 'true' }}
           files: |
-            release-assets/TokenBurnRate-win-x64.exe
-            release-assets/TokenBurnRate-linux-x64
-            release-assets/TokenBurnRate-osx-arm64
-            release-assets/TokenBurnRate-osx-x64
+            release-assets/*-Setup.exe
+            release-assets/*.AppImage
+            release-assets/*-Setup.pkg
+            release-assets/*.nupkg
+            release-assets/releases.*.json
+            release-assets/assets.*.json
 
       # Leaves at most one pre-release standing, and none at all once a full release ships.
       # Deliberately ungated so one step covers both kinds of run - the "keep the current tag"

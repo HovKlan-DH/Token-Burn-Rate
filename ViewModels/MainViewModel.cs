@@ -1003,7 +1003,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             pacing.UsedThisWeek, pacing.WeekBudget, "this week");
 
         Set(PacingBars[2], pacing.MonthFraction, pacing.MonthPercent,
-            pacing.UsedThisPeriod, pacing.Entitlement, "this period");
+            pacing.UsedThisPeriod, pacing.Entitlement, "this month");
 
         static void Set(BarViewModel bar, double fraction, double percent, double used, double budget, string what)
         {
@@ -1017,7 +1017,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             // draw identically, and the overspend was legible only in the small print.
             var over = IsSpent(percent);
             bar.IsOverBudget = over;
-            bar.DetailText = $"{Warning(over)}{Em($"{used:0}")} of {Em($"{budget:0}")} used {what}";
+            bar.DetailText = $"{Warning(over)}{used:0} of {budget:0} tokens used {what}";
             bar.IsEnabled = true;
         }
     }
@@ -1141,9 +1141,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// <summary>The caption's warning prefix, kept apart so the format string is written once.</summary>
     private static string Warning(bool over) => over ? "⚠ " : "";
 
-    /// <summary>Marks a caption run for emphasised drawing by <see cref="UsageBar"/>.</summary>
-    private static string Em(string s) => UsageText.Highlight(s);
-
     /// <summary>
     /// Grows or shrinks the Claude bar list so it matches however many limits the API
     /// returned. Only Claude needs this: the other two panels have a fixed set of rows.
@@ -1232,7 +1229,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 // seeing at a glance rather than reading off the small print.
                 var spent = IsSpent(q.Percent);
                 bar.ValueText = $"{q.Percent:0}%";
-                bar.DetailText = $"{Warning(spent)}{Em($"{q.Used:0}")} of {Em($"{q.Entitlement:0}")} used";
+                bar.DetailText = $"{Warning(spent)}{q.Used:0} of {q.Entitlement:0} used";
                 bar.Fraction = q.Fraction;
                 bar.IsEnabled = true;
                 bar.IsUnlimited = false;

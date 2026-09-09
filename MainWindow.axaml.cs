@@ -164,6 +164,7 @@ public partial class MainWindow : Window
             _vm.TickCountdowns();
             RunRefresh("initial refresh");
             Services.CheckInService.PingHome();
+            Services.UpdateService.CheckOnLaunch();
         };
     }
 

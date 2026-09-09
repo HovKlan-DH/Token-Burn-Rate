@@ -2,3 +2,4 @@
 - [M365 Copilot has no readable usage API](m365-copilot-no-usage-api.md) — separate pool from GitHub Copilot, but needs a tenant admin role and exposes no quota at all.
 - [Claude limits come from the OAuth usage API](claude-usage-api.md) — never recompute plan percentages from transcripts; the ceiling is unpublished and resets are fixed-time.
 - [Never auto-commit](never-auto-commit.md) — make changes and stop; the user runs git commit themselves unless they ask.
+- [Velopack auto-update](velopack-auto-update.md) — packaging moved from raw single-file exe to per-OS Velopack installers; silent auto-update on launch.

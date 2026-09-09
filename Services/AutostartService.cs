@@ -28,9 +28,13 @@ public static class AutostartService
         (OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() || OperatingSystem.IsLinux());
 
     /// <summary>
-    /// The published single-file executable. Under `dotnet run` this is the host rather
-    /// than a standalone binary, which would register something unhelpful, so autostart is
-    /// only offered for a real build.
+    /// The running executable. Under `dotnet run` this is the host rather than the app's
+    /// own binary, which would register something unhelpful, so autostart is only offered
+    /// for a real build.
+    ///
+    /// On a Velopack install the running exe is the versioned copy inside the current
+    /// "app-x.y.z" folder, which an update replaces; the stub one level up keeps its path
+    /// across updates, so that is what gets registered when it exists.
     /// </summary>
     private static string? ExecutablePath
     {
@@ -40,7 +44,31 @@ public static class AutostartService
             if (string.IsNullOrWhiteSpace(path)) return null;
 
             var name = Path.GetFileNameWithoutExtension(path);
-            return name.Equals("dotnet", StringComparison.OrdinalIgnoreCase) ? null : path;
+            if (name.Equals("dotnet", StringComparison.OrdinalIgnoreCase)) return null;
+
+            return VelopackStub(path) ?? path;
+        }
+    }
+
+    /// <summary>
+    /// The update-stable launcher beside a Velopack install's versioned program folder, or
+    /// null when this is not such an install. Velopack keeps a stub named after the app one
+    /// level above the "current"/"app-x.y.z" directory the exe runs from.
+    /// </summary>
+    private static string? VelopackStub(string exePath)
+    {
+        try
+        {
+            var parent = Directory.GetParent(Path.GetDirectoryName(exePath)!)?.FullName;
+            if (parent is null) return null;
+            if (!Directory.Exists(Path.Combine(parent, ".velopack"))) return null;
+
+            var stub = Path.Combine(parent, Path.GetFileName(exePath));
+            return File.Exists(stub) ? stub : null;
+        }
+        catch (Exception)
+        {
+            return null;
         }
     }
 

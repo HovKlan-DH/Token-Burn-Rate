@@ -13,6 +13,10 @@ namespace TokenBurnRate.Services;
 /// back to %APPDATA%, because losing every day's opening balance would break the pacing
 /// bars entirely. The GitHub token deliberately does not live here: it stays in %APPDATA%
 /// with owner-only permissions, since a portable folder may be a USB stick or a share.
+///
+/// A Velopack install also uses %APPDATA% rather than the beside-the-exe location: there
+/// the exe lives in a versioned "current"/"app-x.y.z" folder that each update replaces
+/// wholesale, so state written beside it would be discarded on every auto-update.
 /// </summary>
 public sealed class AppState
 {
@@ -158,13 +162,14 @@ public sealed class AppState
 
     /// <summary>
     /// Beside the executable, named after it (TokenBurnRate.exe -> TokenBurnRate.json),
-    /// unless that directory is not writable.
+    /// unless that directory is not writable or the app is Velopack-installed - see the
+    /// class comment for why an installed build must not write beside its exe.
     /// </summary>
     private static string ResolvePath()
     {
         try
         {
-            var exe = Environment.ProcessPath;
+            var exe = IsVelopackInstalled ? null : Environment.ProcessPath;
             if (!string.IsNullOrWhiteSpace(exe))
             {
                 var dir = System.IO.Path.GetDirectoryName(exe);
@@ -186,6 +191,31 @@ public sealed class AppState
             "TokenBurnRate");
         Directory.CreateDirectory(appData);
         return System.IO.Path.Combine(appData, "TokenBurnRate.json");
+    }
+
+    /// <summary>
+    /// Whether this build is running from a Velopack install. Detected from the layout it
+    /// creates - the exe sits in a "current" or "app-x.y.z" folder next to the
+    /// ".velopack" bookkeeping directory - rather than by asking Velopack, so resolving a
+    /// path stays free of package state and cannot throw on an unpackaged build.
+    /// </summary>
+    private static bool IsVelopackInstalled
+    {
+        get
+        {
+            try
+            {
+                var dir = System.IO.Path.GetDirectoryName(Environment.ProcessPath);
+                if (string.IsNullOrWhiteSpace(dir)) return false;
+
+                var parent = Directory.GetParent(dir)?.FullName;
+                return parent is not null && Directory.Exists(System.IO.Path.Combine(parent, ".velopack"));
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
     }
 
     /// <summary>

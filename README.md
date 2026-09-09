@@ -1,7 +1,8 @@
 # TokenBurnRate
 
 A small always-on-top desktop widget showing live AI usage for **Claude Code** and
-**GitHub Copilot**, as a single portable executable for Windows, Linux and macOS.
+**GitHub Copilot**, with a one-click installer for Windows, Linux and macOS that keeps
+itself up to date.
 
 ![widget](docs/screenshot.png)
 
@@ -123,7 +124,7 @@ same happens if you hide a panel yourself from the tray icon's context menu:
 
 ## Build
 
-**Windows, portable single file:**
+**Windows:**
 
 ```powershell
 .\build-windows.ps1
@@ -135,8 +136,13 @@ or directly:
 dotnet publish TokenBurnRate.csproj -c Release -r win-x64 -o publish/win-x64
 ```
 
-Either produces one file — `publish\win-x64\TokenBurnRate.exe` (~46 MB). Copy just that
-file to the target machine; it needs nothing beside it and no .NET install.
+Either produces a self-contained `publish\win-x64\` folder — run `TokenBurnRate.exe` from
+inside it. No .NET install is needed, but the files beside the exe are, so copy the whole
+folder rather than the exe alone.
+
+That folder is also the input to Velopack's `vpk pack`, which is what the release workflow
+turns into the installer users actually download; building it locally is not required to
+run the app.
 
 All four platforms at once:
 
@@ -228,9 +234,11 @@ to sign in.
 
 ## State file
 
-The app keeps its state in a single JSON file **next to the executable, named after it** -
-`TokenBurnRate.exe` writes `TokenBurnRate.json` - so a portable copy carries its spending
-history with it:
+The app keeps its state in a single JSON file. An installed build writes it to
+`%APPDATA%\TokenBurnRate\` (and the platform equivalent elsewhere), so it survives the
+auto-updates that replace the versioned program folder. A build run straight from a publish
+folder instead writes **next to the executable, named after it** - `TokenBurnRate.exe`
+writes `TokenBurnRate.json` - so a copied folder carries its spending history with it:
 
 ```json
 {

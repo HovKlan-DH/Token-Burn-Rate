@@ -19,21 +19,22 @@
 	<Version>$(InformationalVersion)</Version>
 
 	<AssemblyVersion>0.1.0</AssemblyVersion>
-    <InformationalVersion>0.1.0-alpha.3</InformationalVersion>
+    <InformationalVersion>0.1.0-alpha.5</InformationalVersion>
 	<!--
 	<InformationalVersion>$(AssemblyVersion</InformationalVersion>
 	-->
 
   </PropertyGroup>
 
-  <!-- Portable single-file publish. Trimming is intentionally OFF:
-       Avalonia XAML resolves types by reflection and trimming breaks it only
-       in published builds, which is exactly where it is hardest to diagnose. -->
+  <!-- Self-contained publish, packaged by Velopack into one installer per OS (see
+       build-and-release.yml). Not PublishSingleFile: vpk pack needs the unpacked publish
+       folder as its input and produces the single downloadable file itself (Setup.exe /
+       .pkg / .AppImage) - see .claude/memory for the tradeoff this replaced.
+       Trimming is intentionally OFF: Avalonia XAML resolves types by reflection and
+       trimming breaks it only in published builds, which is exactly where it is hardest
+       to diagnose. -->
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
-    <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
-    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <PublishTrimmed>false</PublishTrimmed>
     <DebugType>none</DebugType>
   </PropertyGroup>
@@ -59,5 +60,6 @@
       <IncludeAssets Condition="'$(Configuration)' != 'Debug'">None</IncludeAssets>
       <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
     </PackageReference>
+    <PackageReference Include="Velopack" Version="1.2.0" />
   </ItemGroup>
 </Project>
