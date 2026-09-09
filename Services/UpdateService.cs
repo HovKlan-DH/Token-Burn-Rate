@@ -18,6 +18,17 @@ public static class UpdateService
 {
     private const string RepoUrl = "https://github.com/HovKlan-DH/TokenBurnRate";
 
+    /// <summary>
+    /// Opt-in flag: without it, only real (non-pre-release) versions are offered, so a user
+    /// on a stable build stays on stable builds. Read directly from
+    /// <see cref="Environment.GetCommandLineArgs"/> rather than threaded in from
+    /// <c>Main(string[] args)</c>, since <see cref="CheckOnLaunch"/> is called parameterless
+    /// from MainWindow's Opened handler.
+    /// </summary>
+    private static bool PrereleaseRequested =>
+        Array.Exists(Environment.GetCommandLineArgs(),
+            a => string.Equals(a, "--update-prerelease", StringComparison.OrdinalIgnoreCase));
+
     public static void CheckOnLaunch()
     {
         _ = CheckOnLaunchAsync();
@@ -27,11 +38,10 @@ public static class UpdateService
     {
         try
         {
-            // Pre-releases count as updates: every release so far is an alpha, and the
-            // workflow deletes superseded ones, so the newest pre-release is simply the
-            // newest build. Excluding them would mean nothing to update to at all until
-            // the first bare X.Y.Z ships.
-            var manager = new UpdateManager(new GithubSource(RepoUrl, accessToken: null, prerelease: true));
+            // Pre-releases only count as updates when --update-prerelease is passed; every
+            // release so far being an alpha means the default (stable-only) has nothing to
+            // update to until the first bare X.Y.Z ships, which is expected.
+            var manager = new UpdateManager(new GithubSource(RepoUrl, accessToken: null, prerelease: PrereleaseRequested));
 
             // Throws when running from a build vpk never packaged (e.g. `dotnet run`, or a
             // manually-copied publish folder) - exactly the case where there is nothing
