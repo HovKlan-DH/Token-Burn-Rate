@@ -120,6 +120,13 @@
           <MenuItem Name="CopilotColorItem" Header="GitHub Copilot…"/>
           <MenuItem Name="PacingColorItem" Header="GitHub Copilot : My Pace…"/>
         </MenuItem>
+        <MenuItem Header="Text size">
+          <MenuItem Name="BiggerTextItem" Header="Make bigger"
+                    IsEnabled="{Binding CanIncreaseFontScale}"/>
+          <MenuItem Name="SmallerTextItem" Header="Make smaller"
+                    IsEnabled="{Binding CanDecreaseFontScale}"/>
+          <MenuItem Name="ResetTextItem" Header="Reset to default"/>
+        </MenuItem>
         <Separator/>
         <MenuItem Header="Start with the computer" ToggleType="CheckBox"
                   IsChecked="{Binding AutostartEnabled, Mode=TwoWay}"
@@ -134,13 +141,23 @@
         <Separator/>
         <MenuItem Name="OpenFolderItem" Header="Open application folder"
                   ToolTip.Tip="Open the folder holding the executable and the state file"/>
-        <MenuItem Name="ProjectPageItem" Header="Project page on GitHub"
-                  ToolTip.Tip="https://github.com/HovKlan-DH/TokenBurnRate"/>
+        <MenuItem Header="About">
+          <MenuItem Name="ProjectPageItem" Header="Project page on GitHub"
+                    ToolTip.Tip="https://github.com/HovKlan-DH/TokenBurnRate"/>
+          <Separator/>
+          <!-- Non-interactive: just tells the user which build they are running, now that
+               updates apply themselves silently in the background (see UpdateService). -->
+          <MenuItem Header="{Binding VersionText}" IsEnabled="False"/>
+        </MenuItem>
         <Separator/>
         <MenuItem Name="ExitItem" Header="Exit application"
                   ToolTip.Tip="Quit TokenBurnRate completely"/>
       </ContextMenu>
     </Border.ContextMenu>
+    <LayoutTransformControl Name="ScaleRoot">
+      <LayoutTransformControl.LayoutTransform>
+        <ScaleTransform ScaleX="{Binding FontScale}" ScaleY="{Binding FontScale}"/>
+      </LayoutTransformControl.LayoutTransform>
     <StackPanel Spacing="8">
 
       <!-- Header: doubles as the drag handle for a frameless widget -->
@@ -271,5 +288,6 @@
 
 
     </StackPanel>
+    </LayoutTransformControl>
   </Border>
 </Window>

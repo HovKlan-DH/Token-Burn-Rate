@@ -76,6 +76,14 @@ public sealed class AppState
     public bool? TrayNoticeShown { get; set; }
 
     /// <summary>
+    /// The whole widget's text/UI scale, set from "Make bigger"/"Make smaller" in the
+    /// context menu. Absent means never set, and the widget defaults to 1.0 - its
+    /// as-designed size.
+    /// </summary>
+    [JsonPropertyName("fontScale")]
+    public double? FontScale { get; set; }
+
+    /// <summary>
     /// Seconds between refreshes. Nothing in the UI offers this: it exists for the rare
     /// case of wanting a slower or faster poll than the default, set by editing the file.
     ///

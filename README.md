@@ -110,6 +110,19 @@ cannot drift from what the vendor dashboards report.
   `~/.claude/.credentials.json` (honours `CLAUDE_CONFIG_DIR`) and **never written back**:
   Claude Code owns that file and refreshes the token itself roughly every 8 hours. If the
   token has expired the panel says so; run `claude` once to refresh it.
+
+  **There is no in-app sign-in for this panel, unlike Copilot below.** Logging into
+  claude.ai in a browser does *not* populate `.credentials.json` - that's a separate
+  session mechanism the usage API doesn't accept. On a new machine the panel stays hidden
+  until you do this once:
+
+  1. Install [Claude Code](https://docs.claude.com/en/docs/claude-code/overview) (`npm
+     install -g @anthropic-ai/claude-code`, or your platform's installer).
+  2. Run `claude` in a terminal and complete its OAuth login (opens a browser).
+  3. Restart TokenBurnRate, or wait for its next poll - no restart is strictly required.
+
+  This is a one-time step per machine; the token then refreshes itself in the background
+  for as long as Claude Code is used normally.
 - **Copilot panel** — a GitHub sign-in. Nothing needs installing: click **Sign in to
   GitHub** in the panel and enter the code it shows (OAuth device flow). If the
   [GitHub CLI](https://cli.github.com/) is already authenticated, or `GH_TOKEN` /
@@ -204,7 +217,7 @@ What each panel needs, and what happens when it is missing:
 
 | Panel | Needs | If unavailable |
 | --- | --- | --- |
-| Claude | Claude Code signed in on that machine | the whole panel is hidden |
+| Claude | Claude Code signed in on that machine (see [Requirements](#requirements)) | the whole panel is hidden |
 | Copilot | a GitHub sign-in (see below) | panel offers a **Sign in to GitHub** button |
 
 A service that is not present on the machine has its panel hidden entirely and the window

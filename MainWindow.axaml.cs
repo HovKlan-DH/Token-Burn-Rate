@@ -81,6 +81,17 @@ public partial class MainWindow : Window
     /// on screen. Kept so OnClosing can unhook it - see ApplyCursors.</summary>
     private PropertyChangedEventHandler? _soloCursorHandler;
 
+    /// <summary>Resizes the window frame when the text scale changes. Kept so OnClosing can
+    /// unhook it, for the same reason as _soloCursorHandler.</summary>
+    private PropertyChangedEventHandler? _fontScaleHandler;
+
+    /// <summary>The widget's width at FontScale 1.0, from the XAML. Multiplied by the current
+    /// scale in ApplyFontScale so the frame grows and shrinks along with the text inside it -
+    /// otherwise a bigger scale would clip against the fixed width the window was designed at.</summary>
+    private const double BaseWidth = 340;
+    private const double BaseMinWidth = 300;
+    private const double BaseMaxWidth = 340;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -113,6 +124,25 @@ public partial class MainWindow : Window
         HookColorPicker("ClaudeColorItem", "Claude", ViewModels.MainViewModel.ColorPanel.Claude);
         HookColorPicker("CopilotColorItem", "GitHub Copilot", ViewModels.MainViewModel.ColorPanel.Copilot);
         HookColorPicker("PacingColorItem", "GitHub Copilot : My Pace", ViewModels.MainViewModel.ColorPanel.Pacing);
+
+        if (this.FindControl<MenuItem>("BiggerTextItem") is { } bigger)
+            bigger.Click += (_, _) => _vm.IncreaseFontScale();
+        if (this.FindControl<MenuItem>("SmallerTextItem") is { } smaller)
+            smaller.Click += (_, _) => _vm.DecreaseFontScale();
+        if (this.FindControl<MenuItem>("ResetTextItem") is { } resetText)
+            resetText.Click += (_, _) => _vm.ResetFontScale();
+
+        // The window frame is a fixed size designed around FontScale 1.0 - see BaseWidth.
+        // This first call therefore only establishes that baseline; the persisted scale is
+        // not read until LoadCollapsedState further down, which raises FontScale and so
+        // reaches the handler below. That handler is what applies the saved size, and every
+        // later change too, so "Make bigger" is not clipped by the old width.
+        ApplyFontScale();
+        _fontScaleHandler = (_, e) =>
+        {
+            if (e.PropertyName == nameof(ViewModels.MainViewModel.FontScale)) ApplyFontScale();
+        };
+        _vm.PropertyChanged += _fontScaleHandler;
 
         if (this.FindControl<Button>("SignInButton") is { } signIn)
             signIn.Click += (_, _) => RunSafely(() => _vm.SignInToGitHubAsync(_cts.Token), "sign-in button");
@@ -161,6 +191,12 @@ public partial class MainWindow : Window
             _opened = true;
 
             ApplyCursors();     // the visual tree is only complete once the window is open
+
+            // The restored position was validated against a screen, but the restored text
+            // scale can still have widened the window past that screen's edge - and the
+            // ApplyFontScale that applied it ran before there was a screen to check.
+            NudgeOntoScreen();
+
             _vm.TickCountdowns();
             RunRefresh("initial refresh");
             Services.CheckInService.PingHome();
@@ -253,6 +289,70 @@ public partial class MainWindow : Window
             toggle();
             e.Handled = true;       // never start a window drag from a header click
         };
+    }
+
+    /// <summary>
+    /// Scales the window frame to match FontScale, so a bigger text size gets a wider window
+    /// to sit in rather than clipping against the layout's as-designed 340px.
+    ///
+    /// The transform in XAML already scales everything inside the LayoutTransformControl -
+    /// including its measured width - but CanResize="False" combined with a fixed
+    /// Width/MinWidth/MaxWidth would still pin the window frame itself at 340px regardless
+    /// of how wide its content becomes.
+    /// </summary>
+    private void ApplyFontScale()
+    {
+        var scale = _vm.FontScale;
+        Width = BaseWidth * scale;
+        MinWidth = BaseMinWidth * scale;
+        MaxWidth = BaseMaxWidth * scale;
+
+        NudgeOntoScreen();
+    }
+
+    /// <summary>
+    /// Pulls the window back inside its screen's working area if it now hangs off the right
+    /// or bottom edge.
+    ///
+    /// The window grows from its top-left corner, so scaling up while docked near an edge
+    /// pushes the far side out of view - and with CanResize="False" and no title bar there
+    /// is no frame to grab and drag it back with, only the header strip. Left and top are
+    /// clamped too, so a widget already partly off those edges is not pushed further out.
+    /// </summary>
+    private void NudgeOntoScreen()
+    {
+        // Runs from the constructor's first ApplyFontScale too, before the window has been
+        // realised and has a screen to sit on. That case simply has nothing to correct -
+        // and querying screens for an unopened window is not reliable across backends, so
+        // failure here is swallowed exactly as in RestorePosition.
+        if (!_opened) return;
+
+        try
+        {
+            Nudge();
+        }
+        catch (Exception)
+        {
+            // A monitor layout the backend cannot report must never break resizing.
+        }
+    }
+
+    private void Nudge()
+    {
+        var screen = Screens.ScreenFromWindow(this) ?? Screens.Primary;
+        if (screen is null) return;
+
+        // Scaling is applied before layout has run, so Bounds still holds the old size -
+        // the freshly assigned Width is the figure to fit, and the height is whatever the
+        // last layout measured (SizeToContent keeps it close enough for an edge check).
+        var area = screen.WorkingArea;
+        var width = (int)Math.Ceiling(Width * screen.Scaling);
+        var height = (int)Math.Ceiling(Bounds.Height * screen.Scaling);
+
+        var x = Math.Max(area.X, Math.Min(Position.X, area.Right - width));
+        var y = Math.Max(area.Y, Math.Min(Position.Y, area.Bottom - height));
+
+        if (x != Position.X || y != Position.Y) Position = new PixelPoint(x, y);
     }
 
     private void OnDragHandlePressed(object? sender, PointerPressedEventArgs e)
@@ -690,6 +790,12 @@ public partial class MainWindow : Window
         {
             _vm.PropertyChanged -= soloCursor;
             _soloCursorHandler = null;
+        }
+
+        if (_fontScaleHandler is { } fontScale)
+        {
+            _vm.PropertyChanged -= fontScale;
+            _fontScaleHandler = null;
         }
 
         base.OnClosing(e);

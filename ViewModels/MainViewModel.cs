@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -763,6 +764,56 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// <summary>False on a platform with no autostart mechanism, which greys the menu item.</summary>
     public bool AutostartSupported => AutostartService.IsSupported;
 
+    // ---- font scale ----------------------------------------------------------------------
+
+    /// <summary>The widget's as-designed size - what "Reset text size" returns to.</summary>
+    private const double DefaultFontScale = 1.0;
+
+    private const double MinFontScale = 0.75;
+    private const double MaxFontScale = 2.0;
+    private const double FontScaleStep = 0.125;
+
+    private double _fontScale = DefaultFontScale;
+
+    /// <summary>
+    /// Uniform scale applied to the whole widget from the context menu's "Make bigger" /
+    /// "Make smaller", for anyone who finds the default text too small - or too large - to
+    /// read comfortably.
+    ///
+    /// Applied as a single render transform on the window's content (see MainWindow.axaml)
+    /// rather than per-control FontSize bindings: the styles in Window.Styles set FontSize
+    /// as literal pixel values, and Grid.ColumnDefinitions cannot be bound in Avalonia (see
+    /// CLAUDE.md) - the bar's own layout would need rebuilding to react to a scale otherwise.
+    /// A render transform scales every control, including the custom-drawn bars, from one
+    /// number with no per-control wiring.
+    /// </summary>
+    public double FontScale
+    {
+        get => _fontScale;
+        private set
+        {
+            if (!Set(ref _fontScale, value)) return;
+            OnPropertyChanged(nameof(CanIncreaseFontScale));
+            OnPropertyChanged(nameof(CanDecreaseFontScale));
+        }
+    }
+
+    /// <summary>Whether "Make bigger" has anywhere left to go - greys the menu item at the ceiling.</summary>
+    public bool CanIncreaseFontScale => _fontScale < MaxFontScale - 1e-9;
+
+    /// <summary>Whether "Make smaller" has anywhere left to go - greys the menu item at the floor.</summary>
+    public bool CanDecreaseFontScale => _fontScale > MinFontScale + 1e-9;
+
+    public void IncreaseFontScale() => SetFontScale(_fontScale + FontScaleStep);
+    public void DecreaseFontScale() => SetFontScale(_fontScale - FontScaleStep);
+    public void ResetFontScale() => SetFontScale(DefaultFontScale);
+
+    private void SetFontScale(double value)
+    {
+        FontScale = Math.Clamp(value, MinFontScale, MaxFontScale);
+        AppState.Update(a => a.FontScale = FontScale);
+    }
+
     /// <summary>
     /// Width of the label column, shared by every bar so they line up. It is measured from
     /// only the labels actually on screen, so collapsing the panel with the longest label
@@ -1062,6 +1113,35 @@ public sealed class MainViewModel : INotifyPropertyChanged
         finally
         {
             _signInRunning = false;
+        }
+    }
+
+    /// <summary>
+    /// The running build's version, shown as a non-interactive entry in the context menu
+    /// now that the app updates itself silently (see Services/UpdateService.cs) - without
+    /// this there was no on-screen way to tell which build was actually running.
+    /// Read from InformationalVersion (the csproj's human-facing "0.1.0-alpha.5", not the
+    /// three-part AssemblyVersion) via reflection, since that is the same value Velopack
+    /// packages under.
+    /// </summary>
+    public static string VersionText
+    {
+        get
+        {
+            var version = Assembly.GetExecutingAssembly()
+                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+                ?.InformationalVersion;
+
+            // SourceLink stamps a "+<git-sha>" build-metadata suffix onto InformationalVersion
+            // at compile time - that's not part of what the csproj declares, so it is trimmed
+            // back off rather than shown as though it were part of the version.
+            if (version is not null)
+            {
+                var plusIndex = version.IndexOf('+');
+                if (plusIndex >= 0) version = version[..plusIndex];
+            }
+
+            return string.IsNullOrWhiteSpace(version) ? "Version unknown" : $"Version {version}";
         }
     }
 
@@ -1652,6 +1732,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
         ResolveRefreshInterval(state);
         ResolveIconConfig(state);
         ResolveColors(state);
+
+        // Absent means never set: stay at the as-designed size. Clamped the same way an
+        // out-of-range value would be if it somehow reached here via a hand-edited file.
+        _fontScale = Math.Clamp(state.FontScale ?? DefaultFontScale, MinFontScale, MaxFontScale);
+        OnPropertyChanged(nameof(FontScale));
+        OnPropertyChanged(nameof(CanIncreaseFontScale));
+        OnPropertyChanged(nameof(CanDecreaseFontScale));
 
         InitialiseAutostart(state);
 
