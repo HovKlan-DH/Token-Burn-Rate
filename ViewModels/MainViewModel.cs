@@ -1152,14 +1152,15 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public void OpenProjectPage() => TryOpenBrowser(ProjectUrl);
 
     /// <summary>
-    /// Opens the folder holding the running executable in the OS file browser - the same
-    /// folder AppState.Path writes the state file into when it is writable, so this is
-    /// where a user goes looking for it, or for the crash logs CrashLog drops beside it.
+    /// Opens the folder AppState.Path writes the state file into, in the OS file browser -
+    /// the same folder CrashLog drops its logs beside. That is the executable's own folder
+    /// for a portable copy, but for a Velopack install (where the exe's folder is a
+    /// versioned, unwritable app-x.y.z directory) it is %APPDATA%/~/.config instead - so
+    /// this must follow AppState's resolution rather than assuming beside-the-exe.
     /// </summary>
     public void OpenApplicationFolder()
     {
-        var exe = Environment.ProcessPath;
-        var dir = string.IsNullOrWhiteSpace(exe) ? null : System.IO.Path.GetDirectoryName(exe);
+        var dir = System.IO.Path.GetDirectoryName(Services.AppState.Path);
         if (string.IsNullOrWhiteSpace(dir)) return;
 
         try
