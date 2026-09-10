@@ -102,14 +102,16 @@
       <ContextMenu>
         <!-- A non-interactive caption; the items below it are the actual toggles. -->
         <MenuItem Header="Show these panels:" IsEnabled="False"/>
-        <!-- A panel with no data at all is dropped from the menu rather than greyed out:
-             on a machine without Claude, an entry that can never do anything is noise. -->
+        <!-- Copilot and My Pace drop out of the menu entirely when they have no data at
+             all: on a machine without Copilot, an entry that can never do anything is
+             noise. Claude is the exception - it stays visible with no data too (see
+             ClaudeNeedsInstall in the panel above), so hiding it is always a real, useful
+             toggle and this entry is never conditioned on ClaudeAvailable. -->
         <!-- Deliberately not bound to IsEnabled: the last panel standing still reads as a
              normal, black menu entry, because it is not broken - it is simply the one that
              cannot be turned off. Greying it made a checked panel look unavailable. The
              refusal lives in SetHidden, which also puts the tick back. -->
         <MenuItem Header="Claude" ToggleType="CheckBox"
-                  IsVisible="{Binding ClaudeAvailable}"
                   IsChecked="{Binding !ClaudeHidden, Mode=TwoWay}"/>
         <MenuItem Header="GitHub Copilot" ToggleType="CheckBox"
                   IsVisible="{Binding CopilotAvailable}"
@@ -236,7 +238,9 @@
                    TextTrimming="None" TextWrapping="Wrap"/>
       </StackPanel>
 
-      <!-- Claude: hidden entirely when the service is not present on this machine -->
+      <!-- Claude: stays visible even with nothing to show, so a machine without Claude Code
+           installed still tells people the panel exists and how to get data into it, rather
+           than silently omitting the panel altogether (see ClaudeNeedsInstall). -->
       <StackPanel Spacing="6" IsVisible="{Binding ClaudeVisible}">
         <!-- The last panel standing cannot be collapsed, so it drops the chevron and the
              click affordance rather than offering a toggle that does nothing. -->
@@ -252,8 +256,23 @@
                      HorizontalAlignment="Right" VerticalAlignment="Center" Margin="8,0,0,0"
                      MaxWidth="200"/>
         </Grid>
-        <ItemsControl ItemsSource="{Binding ClaudeBars}" IsVisible="{Binding ClaudeExpanded}"
+        <ItemsControl ItemsSource="{Binding ClaudeBars}" IsVisible="{Binding ClaudeBarsVisible}"
                       ItemTemplate="{StaticResource BarTemplate}"/>
+
+        <!-- Shown only when Claude Code is not usable from this machine - not installed,
+             not signed in, or a session that expired - so the panel still explains itself
+             instead of just vanishing. -->
+        <StackPanel Spacing="6" IsVisible="{Binding ClaudeInstallHintVisible}">
+          <TextBlock Text="Claude Code isn't available on this machine. Install it to see usage here, or right-click this window to hide the Claude panel."
+                     Classes="subtitle" TextWrapping="Wrap" FontSize="11"/>
+          <Button Name="ClaudeDownloadButton"
+                  HorizontalAlignment="Stretch"
+                  HorizontalContentAlignment="Center"
+                  Padding="0,5" FontSize="10"
+                  Background="{Binding ClaudeAccentColor, Converter={StaticResource Brush}}" Foreground="White"
+                  BorderThickness="0" CornerRadius="4" Cursor="Hand"
+                  Content="Get Claude Code"/>
+        </StackPanel>
       </StackPanel>
 
       <!-- Copilot -->
@@ -277,12 +296,20 @@
              so no CLI install and no admin rights are required. -->
         <Button Name="SignInButton"
                 IsVisible="{Binding CopilotNeedsSignIn}"
-                Content="{Binding SignInText}"
                 HorizontalAlignment="Stretch"
                 HorizontalContentAlignment="Center"
                 Padding="0,5" FontSize="10"
                 Background="#1F6FEB" Foreground="White"
-                BorderThickness="0" CornerRadius="4" Cursor="Hand"/>
+                BorderThickness="0" CornerRadius="4" Cursor="Hand">
+          <TextBlock TextAlignment="Center">
+            <!-- Mode=OneWay is required on both Runs: Run.Text defaults to TwoWay in
+                 Avalonia, and TwoWay plus StringFormat is a known infinite-loop trap
+                 (writes the formatted string back to the source, which reformats it,
+                 forever) - see https://github.com/AvaloniaUI/Avalonia/issues/18737. -->
+            <Run Text="{Binding SignInText, Mode=OneWay}" FontWeight="Normal"/>
+            <Run Text="{Binding SignInCode, Mode=OneWay, StringFormat=' {0}'}" FontWeight="Bold" Foreground="#FFD866"/>
+          </TextBlock>
+        </Button>
       </StackPanel>
 
       <!-- The user's own pacing view, derived from the credit balance above. -->

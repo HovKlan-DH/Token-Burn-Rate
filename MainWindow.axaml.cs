@@ -147,6 +147,9 @@ public partial class MainWindow : Window
         if (this.FindControl<Button>("SignInButton") is { } signIn)
             signIn.Click += (_, _) => RunSafely(() => _vm.SignInToGitHubAsync(_cts.Token), "sign-in button");
 
+        if (this.FindControl<Button>("ClaudeDownloadButton") is { } claudeDownload)
+            claudeDownload.Click += (_, _) => _vm.OpenClaudeDownloadPage();
+
         // Clicking a section header collapses or expands that panel.
         HookHeader("ClaudeHeader", () => _vm.ClaudeSolo, () => _vm.ClaudeCollapsed = !_vm.ClaudeCollapsed);
         HookHeader("CopilotHeader", () => _vm.CopilotSolo, () => _vm.CopilotCollapsed = !_vm.CopilotCollapsed);
@@ -239,7 +242,7 @@ public partial class MainWindow : Window
         // they must be set after it to win over the move cursor they would inherit.
         foreach (var name in new[]
                  {
-                     "RefreshButton", "CloseButton", "PinButton", "SignInButton",
+                     "RefreshButton", "CloseButton", "PinButton", "SignInButton", "ClaudeDownloadButton",
                  })
         {
             if (this.FindControl<Control>(name) is { } c) c.Cursor = hand;

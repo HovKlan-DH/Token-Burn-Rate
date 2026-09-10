@@ -267,6 +267,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string _iconColour = "accent";
     private double _labelWidth = 86;
     private string _signInText = "";
+    private string _signInCode = "";
 
     // One default accent per panel, matching the section headings in the XAML. They live
     // here because the bars carry them: the three bar templates were identical but for
@@ -389,8 +390,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private BarViewModel? ResolveNamedIconSource(string source) => source switch
     {
-        "claude.session" => UsableBar(ClaudeVisible ? ClaudeBarByLabel("SESSION") : null),
-        "claude.week" => UsableBar(ClaudeVisible ? ClaudeBarByLabel("WEEK") : null),
+        "claude.session" => UsableBar(ClaudeVisible && ClaudeAvailable ? ClaudeBarByLabel("SESSION") : null),
+        "claude.week" => UsableBar(ClaudeVisible && ClaudeAvailable ? ClaudeBarByLabel("WEEK") : null),
         "copilot.completions" => UsableBar(CopilotVisible ? CopilotBarAt(0) : null),
         "copilot.chat" => UsableBar(CopilotVisible ? CopilotBarAt(1) : null),
         "copilot.premium" => UsableBar(CopilotVisible ? CopilotBarAt(2) : null),
@@ -420,7 +421,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         BarViewModel? best = null;
 
-        if (ClaudeVisible) best = Highest(best, ClaudeBars);
+        if (ClaudeVisible && ClaudeAvailable) best = Highest(best, ClaudeBars);
         if (CopilotVisible) best = Highest(best, CopilotBars);
         if (PacingVisible) best = Highest(best, PacingBars);
 
@@ -446,15 +447,55 @@ public sealed class MainViewModel : INotifyPropertyChanged
     // A panel shows only when the service has data AND the user has not hidden it. The two
     // are tracked separately so a refresh cannot overwrite the user's choice.
 
-    /// <summary>Set by the refresh: does this service have anything to show?</summary>
+    /// <summary>
+    /// Set by the refresh: does this service have anything to show? Unlike
+    /// CopilotAvailable/PacingAvailable this no longer gates ClaudeVisible (see its own
+    /// comment) - it only decides whether the panel shows bars or the install/sign-in
+    /// explainer, so a change re-measures bar widths (the two layouts differ) rather than
+    /// going through VisibilityChanged, which exists for panels that actually appear or
+    /// disappear.
+    /// </summary>
     public bool ClaudeAvailable
     {
         get => _claudeVisible;
         set
         {
-            if (Set(ref _claudeVisible, value)) VisibilityChanged(nameof(ClaudeVisible));
+            if (Set(ref _claudeVisible, value))
+            {
+                OnPropertyChanged(nameof(ClaudeNeedsInstall));
+                ClaudeBodyChanged();
+                OnBarsChanged();
+            }
             StopLoading();
         }
+    }
+
+    /// <summary>
+    /// True when Claude has nothing to show, so the panel should offer the explainer and
+    /// download link instead of bars. Named "install" rather than "sign-in" (contrast
+    /// CopilotNeedsSignIn) because the far more common reason is that Claude Code was never
+    /// installed on this machine at all, not that it is installed but signed out.
+    /// </summary>
+    public bool ClaudeNeedsInstall => !_claudeVisible;
+
+    /// <summary>
+    /// The two things the Claude panel's body can be: its bars, or the install explainer
+    /// standing in for them. Both gate on ClaudeExpanded, so collapsing the header hides
+    /// whichever is showing - an explainer that ignored it would leave the panel refusing
+    /// to collapse while its chevron claimed it had.
+    /// </summary>
+    public bool ClaudeBarsVisible => ClaudeExpanded && !ClaudeNeedsInstall;
+    public bool ClaudeInstallHintVisible => ClaudeExpanded && ClaudeNeedsInstall;
+
+    /// <summary>
+    /// Announces both halves of the Claude panel's body at once. They are complements of
+    /// the same two inputs, so every caller that changes either input has to raise both -
+    /// routed through here so a later edit cannot update one and leave the other stale.
+    /// </summary>
+    private void ClaudeBodyChanged()
+    {
+        OnPropertyChanged(nameof(ClaudeBarsVisible));
+        OnPropertyChanged(nameof(ClaudeInstallHintVisible));
     }
 
     public bool CopilotAvailable
@@ -468,6 +509,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
     }
     public bool CopilotNeedsSignIn { get => _copilotNeedsSignIn; set => Set(ref _copilotNeedsSignIn, value); }
     public string SignInText { get => _signInText; set => Set(ref _signInText, value); }
+    /// <summary>
+    /// The device-flow code on its own, separate from <see cref="SignInText"/> so the
+    /// button can render "Code:" and the code itself in different weights - empty outside
+    /// the code-shown state.
+    /// </summary>
+    public string SignInCode { get => _signInCode; set => Set(ref _signInCode, value); }
     public bool PacingAvailable
     {
         get => _pacingVisible;
@@ -506,7 +553,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
     // the first poll has answered. Panel and placeholder are drawn from the same IsLoading
     // flag so they are never both visible: see IsLoading's own doc comment for why it
     // clears atomically with the data that makes a panel worth showing.
-    public bool ClaudeVisible => !_isLoading && _claudeVisible && !_claudeHidden;
+    //
+    // Claude, unlike Copilot and pacing, stays visible even when the service has nothing to
+    // show: Claude Code not being installed is the single most likely reason someone opens
+    // this widget and sees an empty window, and a panel that only appears once Claude Code
+    // is already set up is the worst possible place to explain that (see ClaudeNeedsInstall
+    // below, which drives the explainer shown in its place).
+    public bool ClaudeVisible => !_isLoading && !_claudeHidden;
     public bool CopilotVisible => !_isLoading && _copilotVisible && !_copilotHidden;
     public bool PacingVisible => !_isLoading && _pacingVisible && !_pacingHidden;
 
@@ -663,6 +716,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(ClaudeExpanded));
         OnPropertyChanged(nameof(CopilotExpanded));
         OnPropertyChanged(nameof(PacingExpanded));
+        ClaudeBodyChanged();
     }
 
     // Collapsing hides a panel's bars but keeps its header, so the panel can be reopened.
@@ -673,6 +727,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         {
             if (!Set(ref _claudeCollapsed, value)) return;
             OnPropertyChanged(nameof(ClaudeExpanded));
+            ClaudeBodyChanged();
             Persist();
             OnBarsChanged();
         }
@@ -1261,7 +1316,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
             var auth = new GitHubDeviceAuth();
             var code = await auth.RequestCodeAsync(ct).ConfigureAwait(true);
 
-            SignInText = $"Code: {code.UserCode}";
+            SignInText = "Code:";
+            SignInCode = code.UserCode;
             CopilotSubtitle = "waiting for browser approval…";
             TryOpenBrowser(code.VerificationUri);
 
@@ -1269,12 +1325,21 @@ public sealed class MainViewModel : INotifyPropertyChanged
             if (string.IsNullOrWhiteSpace(token))
             {
                 SignInText = "Sign in to GitHub";
+                SignInCode = "";
                 CopilotSubtitle = "sign-in cancelled or timed out";
                 return;
             }
 
             GitHubDeviceAuth.SaveToken(token);
             _copilot.InvalidateToken();
+
+            // Cleared before the refresh, not in the finally below: RefreshCopilotAsync
+            // skips its whole body while this is set (see the guard there), so leaving it
+            // set until the finally would make the one refresh that actually has a token to
+            // use do nothing - the panel would sit on the consumed code and "waiting for
+            // browser approval…" until a timer tick up to RefreshInterval later. There is
+            // nothing left to protect at this point: the code is spent and the token saved.
+            _signInRunning = false;
             await RefreshCopilotAsync(ct).ConfigureAwait(true);
         }
         catch (OperationCanceledException)
@@ -1283,6 +1348,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         catch (Exception ex)
         {
             SignInText = "Sign in to GitHub";
+            SignInCode = "";
             CopilotSubtitle = "sign-in failed: " + ex.Message;
         }
         finally
@@ -1325,6 +1391,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     /// <summary>Opens the project page in the default browser.</summary>
     public void OpenProjectPage() => TryOpenBrowser(ProjectUrl);
+
+    /// <summary>Where the Claude panel's install link sends people when Claude Code is not found.</summary>
+    public const string ClaudeDownloadUrl = "https://code.claude.com/docs/overview";
+
+    /// <summary>Opens the Claude Code install docs in the default browser.</summary>
+    public void OpenClaudeDownloadPage() => TryOpenBrowser(ClaudeDownloadUrl);
 
     /// <summary>
     /// Opens the folder AppState.Path writes the state file into, in the OS file browser -
@@ -1412,6 +1484,24 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private async Task RefreshCopilotAsync(CancellationToken ct)
     {
+        // A device-code sign-in is showing the code and polling GitHub for approval; this
+        // is a background timer tick that runs concurrently with it (see RefreshAsync's
+        // Task.WhenAll). Without this guard, the tick's "needs sign-in" branch below
+        // overwrites SignInText back to "Sign in to GitHub" mid-flow, wiping the code off
+        // screen seconds after it appeared even though nothing has actually changed.
+        //
+        // Skipped, not failed: whatever the previous poll found still stands, so the found
+        // flags are re-asserted rather than left stale - RefreshAsync still runs
+        // ScheduleRetryIfNothingFound afterwards, which would otherwise score this poll on
+        // figures no longer being maintained. Same reasoning as RefreshClaudeAsync's own
+        // skip path.
+        if (_signInRunning)
+        {
+            _copilotFound = CopilotAvailable;
+            _pacingFound = PacingAvailable;
+            return;
+        }
+
         var status = await _copilot.GetStatusAsync(ct).ConfigureAwait(true);
 
         if (!status.IsAvailable)
@@ -1422,6 +1512,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             CopilotAvailable = status.NeedsSignIn;
             CopilotSubtitle = status.Error ?? "unavailable";
             SignInText = "Sign in to GitHub";
+            SignInCode = "";
             _copilotReset = "";
             PacingAvailable = false;
             // Not status.NeedsSignIn: the panel stays visible so the sign-in button has
@@ -2049,7 +2140,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         // Measured from the bars actually on screen, so this has to agree with what the UI
         // binds to: a hidden panel contributes nothing, and a solo panel is expanded even
         // when its stored preference says collapsed.
-        if (ClaudeVisible && ClaudeExpanded) widest = Widest(ClaudeBars, widest);
+        if (ClaudeVisible && ClaudeBarsVisible) widest = Widest(ClaudeBars, widest);
         if (CopilotVisible && CopilotExpanded) widest = Widest(CopilotBars, widest);
         if (PacingVisible && PacingExpanded) widest = Widest(PacingBars, widest);
 
