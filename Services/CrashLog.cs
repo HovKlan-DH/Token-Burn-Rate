@@ -84,7 +84,7 @@ public static class CrashLog
         var stamp = DateTime.Now.ToString("yyyyMMddHHmmss");
         var exe = Environment.ProcessPath;
         var name = string.IsNullOrWhiteSpace(exe)
-            ? "TokenBurnRate"
+            ? "Token-Burn-Rate"
             : Path.GetFileNameWithoutExtension(exe);
 
         var fileName = $"{name}.crash.{stamp}.log";
@@ -99,7 +99,7 @@ public static class CrashLog
     {
         var sb = new StringBuilder();
 
-        sb.AppendLine("TokenBurnRate crash report");
+        sb.AppendLine("Token Burn Rate crash report");
         sb.AppendLine("==========================");
         sb.AppendLine($"When      : {DateTime.Now:yyyy-MM-dd HH:mm:ss} (local) / {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} (UTC)");
         sb.AppendLine($"Context   : {context}");

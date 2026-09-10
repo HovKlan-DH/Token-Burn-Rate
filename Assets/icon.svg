@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
-  <!-- TokenBurnRate application icon: the "quota ring" mark, the same design the tray icon
+  <!-- Token Burn Rate application icon: the "quota ring" mark, the same design the tray icon
        draws live (Services/TrayIconRenderer.cs, Assets/live-ring-icon.md) - a filled arc
        around a flame, so the static app identity and the live tray icon read as one mark.
 

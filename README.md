@@ -1,4 +1,4 @@
-# TokenBurnRate
+# Token Burn Rate
 
 A small always-on-top desktop widget showing live AI usage for **Claude Code** and
 **GitHub Copilot**, with a one-click installer for Windows, Linux and macOS that keeps
@@ -63,8 +63,9 @@ used today        = balance at first launch today - balance now
 ```
 
 With 1000 credits and 10 business days left, the allowance is 100/day; spend 60 and the bar
-reads 60%. A business day is Monday-Friday; public holidays are not modelled, which only
-makes the allowance slightly conservative.
+reads 60%. A business day is one of the first N days of the week counting from Monday, where
+N is set via the context menu's "Workdays in a week" (1-7, default 5 = Monday-Friday); public
+holidays are not modelled, which only makes the allowance slightly conservative.
 
 The allowance is **recalculated daily from what is actually left**, so it self-corrects:
 underspend today and tomorrow's rises, overspend and it falls. Spending past the allowance
@@ -119,7 +120,7 @@ cannot drift from what the vendor dashboards report.
   1. Install [Claude Code](https://docs.claude.com/en/docs/claude-code/overview) (`npm
      install -g @anthropic-ai/claude-code`, or your platform's installer).
   2. Run `claude` in a terminal and complete its OAuth login (opens a browser).
-  3. Restart TokenBurnRate, or wait for its next poll - no restart is strictly required.
+  3. Restart Token Burn Rate, or wait for its next poll - no restart is strictly required.
 
   This is a one-time step per machine; the token then refreshes itself in the background
   for as long as Claude Code is used normally.
@@ -146,10 +147,10 @@ same happens if you hide a panel yourself from the tray icon's context menu:
 or directly:
 
 ```bash
-dotnet publish TokenBurnRate.csproj -c Release -r win-x64 -o publish/win-x64
+dotnet publish Token-Burn-Rate.csproj -c Release -r win-x64 -o publish/win-x64
 ```
 
-Either produces a self-contained `publish\win-x64\` folder — run `TokenBurnRate.exe` from
+Either produces a self-contained `publish\win-x64\` folder — run `Token-Burn-Rate.exe` from
 inside it. No .NET install is needed, but the files beside the exe are, so copy the whole
 folder rather than the exe alone.
 
@@ -191,13 +192,13 @@ hot-core highlight, which turns to mush at that scale.
 The published binary needs the executable bit after transfer:
 
 ```bash
-chmod +x TokenBurnRate
+chmod +x Token-Burn-Rate
 ```
 
 macOS builds are unsigned, so Gatekeeper quarantines them on first run:
 
 ```bash
-xattr -d com.apple.quarantine TokenBurnRate
+xattr -d com.apple.quarantine Token-Burn-Rate
 ```
 
 ## Running it on a work machine
@@ -207,7 +208,7 @@ your PC"). Choose *More info* → *Run anyway*. If it was downloaded or copied f
 share, Windows may also mark it blocked — clear that with:
 
 ```powershell
-Unblock-File .\TokenBurnRate.exe
+Unblock-File .\Token-Burn-Rate.exe
 ```
 
 It needs no installer and no admin rights. See [State file](#state-file) for what it
@@ -232,7 +233,7 @@ you see.
 
 Nothing needs installing for (3): click **Sign in to GitHub**, and the widget shows a short
 code and opens `github.com/login/device`. Enter the code once and it stores the token in
-`%LOCALAPPDATA%\TokenBurnRate\github.json`, readable only by your user. This is GitHub's standard
+`%LOCALAPPDATA%\Token-Burn-Rate\github.json`, readable only by your user. This is GitHub's standard
 OAuth device flow — no admin rights, no CLI, no client secret. The requested scope is
 `read:user`, the least privilege that still answers the Copilot quota endpoint.
 
@@ -248,10 +249,10 @@ to sign in.
 ## State file
 
 The app keeps its state in a single JSON file. An installed build writes it to
-`%LOCALAPPDATA%\TokenBurnRate\` (and the platform equivalent elsewhere), so it survives the
+`%LOCALAPPDATA%\Token-Burn-Rate\` (and the platform equivalent elsewhere), so it survives the
 auto-updates that replace the versioned program folder. A build run straight from a publish
-folder instead writes **next to the executable, named after it** - `TokenBurnRate.exe`
-writes `TokenBurnRate.json` - so a copied folder carries its spending history with it:
+folder instead writes **next to the executable, named after it** - `Token-Burn-Rate.exe`
+writes `Token-Burn-Rate.json` - so a copied folder carries its spending history with it:
 
 ```json
 {
@@ -269,6 +270,10 @@ writes `TokenBurnRate.json` - so a copied folder carries its spending history wi
 `window` is where the widget was last left on screen, so it reopens in the same place. A
 position that no longer lands on a connected screen is ignored, which keeps the widget from
 disappearing off the edge of a display that has since been unplugged.
+
+An install from before the app was renamed kept this file, and the GitHub token beside it, in
+`%LOCALAPPDATA%\TokenBurnRate\`. Both are moved across on the first launch after updating, so
+settings and the day's opening balance carry over and no fresh GitHub sign-in is needed.
 
 `pacing` holds the credit balance recorded at the first launch of the day and of the week,
 which is what makes the Day and Week bars measurable at all. Deleting the file re-anchors
@@ -302,16 +307,16 @@ nothing for that risk.
 and never corrected on your behalf; the risk above is simply yours to take.
 
 If the executable's own folder cannot be written - a read-only network share, or
-`Program Files` - the file falls back to `%LOCALAPPDATA%\TokenBurnRate\TokenBurnRate.json`, so
+`Program Files` - the file falls back to `%LOCALAPPDATA%\Token-Burn-Rate\Token-Burn-Rate.json`, so
 tracking keeps working rather than silently losing each day's opening balance.
 
 The GitHub token is deliberately **not** kept here. It stays in
-`%APPDATA%\TokenBurnRate\github.json` with owner-only permissions, because a portable
+`%APPDATA%\Token-Burn-Rate\github.json` with owner-only permissions, because a portable
 folder may well be a USB stick or a shared drive.
 
 ## Crash reports
 
-An unhandled exception is written to `TokenBurnRate.crash.20261231235959.log` - the
+An unhandled exception is written to `Token-Burn-Rate.crash.20261231235959.log` - the
 executable's name, then the timestamp - in the same folder as the state file, so a crash
 can be sent on rather than lost with the process. Each crash gets its own file, holding
 the time, app version, OS and runtime, and the full exception chain including inner
@@ -357,8 +362,8 @@ per-user mechanism. **None of them requires administrator rights**:
 | OS | Where the entry goes |
 | --- | --- |
 | Windows | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` |
-| macOS | `~/Library/LaunchAgents/com.tokenburnrate.plist` |
-| Linux | `~/.config/autostart/TokenBurnRate.desktop` (XDG spec, honours `XDG_CONFIG_HOME`) |
+| macOS | `~/Library/LaunchAgents/com.token-burn-rate.plist` |
+| Linux | `~/.config/autostart/Token-Burn-Rate.desktop` (XDG spec, honours `XDG_CONFIG_HOME`) |
 
 `HKCU` is the current user's own registry hive; only the machine-wide `HKLM` equivalent
 needs elevation. Removing the entry is all it takes to undo, and turning the toggle off

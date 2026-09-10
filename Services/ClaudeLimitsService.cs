@@ -31,7 +31,7 @@ public sealed class ClaudeLimitsService
     public ClaudeLimitsService(HttpClient? http = null)
     {
         _http = http ?? new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-        _http.DefaultRequestHeaders.UserAgent.ParseAdd("TokenBurnRate/1.0");
+        _http.DefaultRequestHeaders.UserAgent.ParseAdd("Token-Burn-Rate/1.0");
     }
 
     public static string CredentialsPath
@@ -64,7 +64,10 @@ public sealed class ClaudeLimitsService
         }
         catch (Exception ex)
         {
-            return ClaudeLimitsStatus.Unavailable("credentials unreadable: " + ex.Message);
+            // A file that failed to read - as opposed to one that is absent or well-formed
+            // but signed out - is as likely to be Claude Code mid-rewrite as it is to be
+            // genuinely corrupt, so it is worth the same fast retry as a network hiccup.
+            return ClaudeLimitsStatus.Unavailable("credentials unreadable: " + ex.Message, transient: true);
         }
 
         try
@@ -77,7 +80,7 @@ public sealed class ClaudeLimitsService
             if (resp.StatusCode == System.Net.HttpStatusCode.Unauthorized)
                 return ClaudeLimitsStatus.Unavailable("session expired - run claude to refresh");
             if (!resp.IsSuccessStatusCode)
-                return ClaudeLimitsStatus.Unavailable($"usage API returned {(int)resp.StatusCode}");
+                return ClaudeLimitsStatus.Unavailable($"usage API returned {(int)resp.StatusCode}", transient: true);
 
             var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             var status = Parse(json);
@@ -90,7 +93,11 @@ public sealed class ClaudeLimitsService
         }
         catch (Exception ex)
         {
-            return ClaudeLimitsStatus.Unavailable(ex.Message);
+            // Network unreachable, DNS not resolved yet, TLS handshake failed, timed out -
+            // the boot-time case this whole flag exists for: the connection itself never
+            // completed, which a login could not have prevented and a few seconds usually
+            // fixes on its own.
+            return ClaudeLimitsStatus.Unavailable(ex.Message, transient: true);
         }
     }
 

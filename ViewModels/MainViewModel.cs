@@ -121,6 +121,33 @@ public sealed class BarViewModel : INotifyPropertyChanged
 
     public double Percent => Fraction * 100;
 
+    private IReadOnlyList<double>? _markers;
+
+    /// <summary>
+    /// Pacing tick marks along the bar, as fractions 0-1 - currently only populated on the
+    /// My Pace week bar and Claude's WEEK bar, one per workday in the week, spanning the
+    /// whole week rather than only the days elapsed so far. See <see cref="TodayMarkerIndex"/>
+    /// for which one is "today"; null on every other bar, where the track is left plain.
+    /// </summary>
+    public IReadOnlyList<double>? Markers { get => _markers; set => Set(ref _markers, value); }
+
+    private int _todayMarkerIndex = -1;
+
+    /// <summary>
+    /// Index into <see cref="Markers"/> that stands for "today". Negative means there is no
+    /// "today" to mark and every tick draws muted - a weekly window that has not started
+    /// yet. An index past the last entry is not an error either: on the week's final workday
+    /// the boundary is the bar's own right edge, which already marks it.
+    /// </summary>
+    public int TodayMarkerIndex { get => _todayMarkerIndex; set => Set(ref _todayMarkerIndex, value); }
+
+    /// <summary>
+    /// The reset time behind this bar's <see cref="Markers"/>, kept only so changing
+    /// "Workdays in a week" can recompute Claude's rolling-week markers immediately
+    /// instead of waiting for the next poll - see MainViewModel.WorkDaysPerWeek.
+    /// </summary>
+    public DateTimeOffset? MarkersResetsAt { get; set; }
+
     public event PropertyChangedEventHandler? PropertyChanged;
     private void OnPropertyChanged([CallerMemberName] string? n = null)
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(n));
@@ -138,6 +165,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private readonly ClaudeLimitsService _claudeLimits = new();
     private readonly CopilotUsageService _copilot = new();
     private readonly CopilotPacingService _pacing = new();
+
+    /// <summary>
+    /// The status behind the last successful Copilot poll, kept only so changing "Workdays
+    /// in a week" can recompute the pacing bars immediately instead of waiting for the next
+    /// poll cycle.
+    /// </summary>
+    private CopilotStatus? _lastCopilotStatus;
 
     private DateTimeOffset _nextRefresh = DateTimeOffset.UtcNow;
 
@@ -163,6 +197,18 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private bool _claudeFound;
     private bool _copilotFound;
     private bool _pacingFound;
+
+    /// <summary>
+    /// Set when the poll that just finished failed to reach Claude for a reason a few more
+    /// seconds could fix - see <see cref="ClaudeLimitsStatus.IsTransientFailure"/> - as
+    /// opposed to "not signed in" or "session expired", which polling again sooner cannot
+    /// help. Folded into <see cref="NothingToShow"/> so a boot-time race that only knocks
+    /// out Claude (Copilot's endpoint came up first, say) still gets the fast retry: the
+    /// old all-or-nothing check stood the back-off down the moment any one service had
+    /// data, which is exactly the case that left the Claude panel missing until the next
+    /// full-interval poll or a manual restart.
+    /// </summary>
+    private bool _claudeTransientFailure;
 
     /// <summary>How long the current back-off is, or null when the last poll found data.</summary>
     private TimeSpan? _retryDelay;
@@ -513,15 +559,16 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     /// <summary>
     /// True when the poll that just finished found nothing anywhere - every service either
-    /// failed or came back empty. Set explicitly from the three services' own results (see
-    /// <see cref="_claudeFound"/> and its siblings) rather than read off a panel's
-    /// IsVisible, which defaults true before any poll ever runs so the panel can show its
-    /// placeholder dashes - a check built on that would never see "nothing" even when a
-    /// poll genuinely failed everywhere. Drives only the fast-retry back-off in
-    /// <see cref="ScheduleRetryIfNothingFound"/>; IsLoading does not depend on this at all -
-    /// see its own doc comment.
+    /// failed or came back empty - or when Claude specifically hit a failure worth
+    /// fast-retrying on its own (see <see cref="_claudeTransientFailure"/>). Set explicitly
+    /// from the three services' own results (see <see cref="_claudeFound"/> and its
+    /// siblings) rather than read off a panel's IsVisible, which defaults true before any
+    /// poll ever runs so the panel can show its placeholder dashes - a check built on that
+    /// would never see "nothing" even when a poll genuinely failed everywhere. Drives only
+    /// the fast-retry back-off in <see cref="ScheduleRetryIfNothingFound"/>; IsLoading does
+    /// not depend on this at all - see its own doc comment.
     /// </summary>
-    private bool NothingToShow => !_claudeFound && !_copilotFound && !_pacingFound;
+    private bool NothingToShow => (!_claudeFound && !_copilotFound && !_pacingFound) || _claudeTransientFailure;
 
     // Hiding is the user's own choice, made from the right-click menu.
     public bool ClaudeHidden
@@ -814,6 +861,65 @@ public sealed class MainViewModel : INotifyPropertyChanged
         AppState.Update(a => a.FontScale = FontScale);
     }
 
+    // ---- workdays per week ----------------------------------------------------------------
+
+    private int _workDaysPerWeek = BusinessDays.DefaultWorkDaysPerWeek;
+
+    /// <summary>
+    /// How many days of the week count as workdays for "My Pace" - the first N days
+    /// starting Monday (see <see cref="BusinessDays"/>), set from the context menu's
+    /// "Workdays in a week". Replaces the previous hardcoded Monday-Friday week.
+    /// </summary>
+    public int WorkDaysPerWeek
+    {
+        get => _workDaysPerWeek;
+        set
+        {
+            var clamped = Math.Clamp(value, BusinessDays.MinWorkDaysPerWeek, BusinessDays.MaxWorkDaysPerWeek);
+            if (!Set(ref _workDaysPerWeek, clamped)) return;
+            AppState.Update(a => a.WorkDaysPerWeek = _workDaysPerWeek);
+            for (int n = BusinessDays.MinWorkDaysPerWeek; n <= BusinessDays.MaxWorkDaysPerWeek; n++)
+                OnPropertyChanged(WorkDaysCheckedProperty(n));
+
+            // Recompute immediately from the last known status rather than waiting for the
+            // next poll - otherwise the menu selection would appear to do nothing until the
+            // next refresh cycle.
+            if (_lastCopilotStatus is { } status) RefreshPacing(status);
+
+            // Same for Claude's rolling week bar: it has no separate "last status" to replay,
+            // but the reset time it was last computed from is enough to redraw the markers.
+            // Keyed off Markers rather than MarkersResetsAt, since a weekly limit that has
+            // not started yet has ticks but no reset time, and would otherwise keep the old
+            // workday count's ticks while the My Pace bar beside it redrew.
+            foreach (var bar in ClaudeBars)
+                if (bar.Markers is not null)
+                {
+                    bar.Markers = RollingWeekMarkers(_workDaysPerWeek);
+                    bar.TodayMarkerIndex = RollingWeekTodayIndex(bar.MarkersResetsAt, _workDaysPerWeek);
+                }
+        }
+    }
+
+    private static string WorkDaysCheckedProperty(int n) => n switch
+    {
+        1 => nameof(IsWorkDays1),
+        2 => nameof(IsWorkDays2),
+        3 => nameof(IsWorkDays3),
+        4 => nameof(IsWorkDays4),
+        5 => nameof(IsWorkDays5),
+        6 => nameof(IsWorkDays6),
+        _ => nameof(IsWorkDays7),
+    };
+
+    /// <summary>Backs the "Workdays in a week" radio items 1-7 in the context menu.</summary>
+    public bool IsWorkDays1 { get => _workDaysPerWeek == 1; set { if (value) WorkDaysPerWeek = 1; } }
+    public bool IsWorkDays2 { get => _workDaysPerWeek == 2; set { if (value) WorkDaysPerWeek = 2; } }
+    public bool IsWorkDays3 { get => _workDaysPerWeek == 3; set { if (value) WorkDaysPerWeek = 3; } }
+    public bool IsWorkDays4 { get => _workDaysPerWeek == 4; set { if (value) WorkDaysPerWeek = 4; } }
+    public bool IsWorkDays5 { get => _workDaysPerWeek == 5; set { if (value) WorkDaysPerWeek = 5; } }
+    public bool IsWorkDays6 { get => _workDaysPerWeek == 6; set { if (value) WorkDaysPerWeek = 6; } }
+    public bool IsWorkDays7 { get => _workDaysPerWeek == 7; set { if (value) WorkDaysPerWeek = 7; } }
+
     /// <summary>
     /// Width of the label column, shared by every bar so they line up. It is measured from
     /// only the labels actually on screen, so collapsing the panel with the longest label
@@ -901,14 +1007,17 @@ public sealed class MainViewModel : INotifyPropertyChanged
     }
 
     /// <summary>
-    /// Arms a fast retry when the poll that just finished found nothing anywhere, or stands
-    /// the back-off down once something has.
+    /// Arms a fast retry when the poll that just finished found nothing anywhere, or when
+    /// Claude alone hit a transient failure, or stands the back-off down once neither is
+    /// true - see <see cref="NothingToShow"/>.
     ///
     /// The app starts with the session, so the first poll usually runs before the network
-    /// is up and both services fail - not worth a full refresh interval of silence, since a
-    /// few seconds later it would almost certainly work. RetryDue asks the window to come
-    /// back sooner; the interval doubles each time so a machine that is genuinely offline
-    /// settles onto the normal cadence instead of polling forever.
+    /// is up. That can knock out every service, or just one of them - Copilot and Claude
+    /// hit different hosts and rarely fail together - so a boot-time race that only cost
+    /// Claude its connection still needs to be caught here rather than waiting out a full
+    /// refresh interval with the panel missing. RetryDue asks the window to come back
+    /// sooner; the interval doubles each time so a machine that is genuinely offline settles
+    /// onto the normal cadence instead of polling forever.
     /// </summary>
     private void ScheduleRetryIfNothingFound()
     {
@@ -967,6 +1076,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     bar.ValueText = $"{l.Percent:0}%";
                     bar.DetailText = l.ResetText;
                     bar.IsEnabled = true;
+                    var isWeekly = IsWeeklyLimit(l.Kind);
+                    bar.MarkersResetsAt = isWeekly ? l.ResetsAt : null;
+                    bar.Markers = isWeekly ? RollingWeekMarkers(_workDaysPerWeek) : null;
+                    bar.TodayMarkerIndex = isWeekly ? RollingWeekTodayIndex(l.ResetsAt, _workDaysPerWeek) : -1;
 
                     // No warning glyph here: this caption is the reset time, not a percentage,
                     // so a "⚠" in front of it would read as a problem with the reset. The bar
@@ -988,6 +1101,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
             ClaudeAvailable = limits.IsAvailable;
             _claudeFound = limits.IsAvailable;
+            _claudeTransientFailure = !limits.IsAvailable && limits.IsTransientFailure;
             ClaudeSubtitle = limits.IsAvailable ? (_claudePlan ?? "") : (limits.Error ?? "");
         }
         else
@@ -995,6 +1109,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             // Gate skipped this poll: whatever the previous poll found still stands, so
             // this is not "nothing" for the retry back-off's purposes.
             _claudeFound = ClaudeAvailable;
+            _claudeTransientFailure = false;
             ClaudeSubtitle = _claudePlan ?? "";
         }
     }
@@ -1027,7 +1142,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// </summary>
     private void RefreshPacing(CopilotStatus status)
     {
-        var pacing = _pacing.Build(status, DateTime.Now);
+        _lastCopilotStatus = status;
+        var pacing = _pacing.Build(status, DateTime.Now, _workDaysPerWeek);
         if (pacing is null)
         {
             // Clear the bars as well as hiding the panel. They are reused, so a day that
@@ -1052,6 +1168,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
         Set(PacingBars[1], pacing.WeekFraction, pacing.WeekPercent,
             pacing.UsedThisWeek, pacing.WeekBudget, "this week");
+        PacingBars[1].Markers = WeekMarkers(pacing.WorkdaysInWeek);
+        PacingBars[1].TodayMarkerIndex = pacing.WorkdayIndexInWeek - 1;
 
         Set(PacingBars[2], pacing.MonthFraction, pacing.MonthPercent,
             pacing.UsedThisPeriod, pacing.Entitlement, "this month");
@@ -1071,6 +1189,63 @@ public sealed class MainViewModel : INotifyPropertyChanged
             bar.DetailText = $"{Warning(over)}{used:0} of {budget:0} tokens used {what}";
             bar.IsEnabled = true;
         }
+    }
+
+    /// <summary>
+    /// One marker per workday boundary in the week, Monday through the day before the
+    /// week's last workday - the days still ahead included, not only those elapsed so far,
+    /// so the whole week's shape is visible against the fill. The very last boundary is
+    /// skipped: it always sits exactly at the bar's own right edge, which already marks it,
+    /// so a tick there (red on the last workday included - see
+    /// <see cref="BarViewModel.TodayMarkerIndex"/>, set by the caller) would be redundant.
+    /// </summary>
+    private static IReadOnlyList<double>? WeekMarkers(int workdaysInWeek)
+    {
+        var count = workdaysInWeek - 1;
+        if (count <= 0) return null;
+
+        var markers = new double[count];
+        for (var i = 0; i < count; i++)
+            markers[i] = (double)(i + 1) / workdaysInWeek;
+        return markers;
+    }
+
+    /// <summary>Whether a Claude limit's Kind is the rolling 7-day window - see ClaudeLimitsService.LabelFor.</summary>
+    private static bool IsWeeklyLimit(string kind) => kind is "weekly_all" or "seven_day";
+
+    /// <summary>
+    /// One marker per workday boundary in Claude's rolling 7-day window, spanning the whole
+    /// window - days still ahead included - on the same "spend it within your work week"
+    /// reading as Copilot's My Pace; see <see cref="WeekMarkers"/>, including why the very
+    /// last boundary is skipped. The window itself is not Monday-anchored (it starts
+    /// whenever the account last reset), so workdays here are calendar-agnostic: the
+    /// configured count of equal slices from window start, not real Mon-Fri weekdays -
+    /// someone at a 5-day-a-week job reads the bar as "gone in 5 workdays" regardless of
+    /// which weekday the window happens to start on.
+    /// </summary>
+    private static IReadOnlyList<double>? RollingWeekMarkers(int workDaysPerWeek)
+    {
+        var count = workDaysPerWeek - 1;
+        if (count <= 0) return null;
+
+        var markers = new double[count];
+        for (var i = 0; i < count; i++)
+            markers[i] = (double)(i + 1) / workDaysPerWeek;
+        return markers;
+    }
+
+    /// <summary>
+    /// The 0-based index into <see cref="RollingWeekMarkers"/> that is "today" - which of
+    /// the equal work-day slices from window start "now" falls in.
+    /// </summary>
+    private static int RollingWeekTodayIndex(DateTimeOffset? resetsAt, int workDaysPerWeek)
+    {
+        if (resetsAt is not { } reset || workDaysPerWeek <= 0) return -1;
+
+        var start = reset.AddDays(-7);
+        var slice = TimeSpan.FromDays(7.0 / workDaysPerWeek);
+        var elapsed = DateTimeOffset.UtcNow - start;
+        return Math.Clamp((int)(elapsed.Ticks / slice.Ticks), 0, workDaysPerWeek - 1);
     }
 
     /// <summary>
@@ -1146,7 +1321,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     }
 
     /// <summary>The project's home, opened from the context menu.</summary>
-    public const string ProjectUrl = "https://github.com/HovKlan-DH/TokenBurnRate";
+    public const string ProjectUrl = "https://github.com/HovKlan-DH/Token-Burn-Rate";
 
     /// <summary>Opens the project page in the default browser.</summary>
     public void OpenProjectPage() => TryOpenBrowser(ProjectUrl);
@@ -1208,6 +1383,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
         bar.IsEnabled = false;
         bar.IsOverBudget = false;
         bar.IsUnlimited = false;
+        bar.Markers = null;
+        bar.TodayMarkerIndex = -1;
+        bar.MarkersResetsAt = null;
     }
 
     /// <summary>
@@ -1251,6 +1429,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             // poll found nothing for the retry back-off's purposes either way.
             _copilotFound = false;
             _pacingFound = false;
+            _lastCopilotStatus = null;
             foreach (var bar in CopilotBars) Reset(bar);
             foreach (var bar in PacingBars) Reset(bar);
             return;
@@ -1741,6 +1920,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(CanIncreaseFontScale));
         OnPropertyChanged(nameof(CanDecreaseFontScale));
 
+        // Absent means never set: stay at the as-designed 5-day (Monday-Friday) week.
+        _workDaysPerWeek = Math.Clamp(state.WorkDaysPerWeek ?? BusinessDays.DefaultWorkDaysPerWeek,
+            BusinessDays.MinWorkDaysPerWeek, BusinessDays.MaxWorkDaysPerWeek);
+        OnPropertyChanged(nameof(WorkDaysPerWeek));
+        for (int n = BusinessDays.MinWorkDaysPerWeek; n <= BusinessDays.MaxWorkDaysPerWeek; n++)
+            OnPropertyChanged(WorkDaysCheckedProperty(n));
+
         InitialiseAutostart(state);
 
         // Absent means never set: stay pinned, which is the widget's reason for existing.
@@ -1809,6 +1995,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
         // the profile takes to answer - seconds, on a roaming or network-backed one.
         Task.Run(() =>
         {
+            // Before anything reads or writes the current entry: the pre-rename one still
+            // fires at login and is invisible to both, so it has to go regardless of whether
+            // this is a first run.
+            AutostartService.RemoveLegacyEntry();
+
             if (firstRun)
             {
                 AutostartService.Set(true);

@@ -85,7 +85,18 @@ public sealed class ClaudeLimitsStatus
     public string? Error { get; init; }
     public bool IsAvailable => Error is null && Limits.Count > 0;
 
-    public static ClaudeLimitsStatus Unavailable(string error) => new() { Error = error };
+    /// <summary>
+    /// Whether this failure is worth fast-retrying: a network hiccup, an unreadable
+    /// credentials file, or an unexpected HTTP status can all clear themselves within
+    /// seconds, which is exactly the boot-time race where the network stack is not up yet
+    /// when the first poll runs. "not signed in" and "session expired" cannot be fixed by
+    /// polling again sooner - only a `claude` login does that - so they are excluded the
+    /// same way Copilot's NeedsSignIn is excluded from its own retry accounting.
+    /// </summary>
+    public bool IsTransientFailure { get; init; }
+
+    public static ClaudeLimitsStatus Unavailable(string error, bool transient = false) =>
+        new() { Error = error, IsTransientFailure = transient };
 }
 
 /// <summary>
@@ -102,6 +113,12 @@ public sealed class CopilotPacing
     public double UsedThisWeek { get; init; }
     public double WeekBudget { get; init; }
     public double UsedThisPeriod { get; init; }
+
+    /// <summary>Today's 1-based workday index within the week (Monday = 1).</summary>
+    public int WorkdayIndexInWeek { get; init; }
+
+    /// <summary>Total workdays the week bar's budget spans, from Monday through its last workday.</summary>
+    public int WorkdaysInWeek { get; init; }
 
     public double DayFraction => PerDayAllowance > 0 ? UsedToday / PerDayAllowance : 0;
     public double WeekFraction => WeekBudget > 0 ? UsedThisWeek / WeekBudget : 0;

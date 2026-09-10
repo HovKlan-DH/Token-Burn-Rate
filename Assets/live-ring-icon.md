@@ -1,6 +1,6 @@
 # Live ring tray icon — implementation spec
 
-Draw the TokenBurnRate tray icon at runtime as a "quota ring": a filled arc showing one
+Draw the Token Burn Rate tray icon at runtime as a "quota ring": a filled arc showing one
 bar's utilisation, in that panel's own accent colour, redrawn when the figure changes.
 
 The application icon itself does **not** change. `ApplicationIcon` stamps the exe and
@@ -146,7 +146,7 @@ Notes for whoever writes this:
 _tray = new TrayIcon
 {
     Icon = Icon,
-    ToolTipText = "TokenBurnRate",
+    ToolTipText = "Token Burn Rate",
     IsVisible = true,
     Menu = new NativeMenu { toggle, exit },
 };
@@ -163,7 +163,7 @@ private void UpdateTrayIcon()
     if (_tray is null) return;
 
     var source = _vm.ResolveIconState().Source;      // see §3, may be null
-    if (source is null) { _tray.Icon = Icon; _tray.ToolTipText = "TokenBurnRate"; return; }
+    if (source is null) { _tray.Icon = Icon; _tray.ToolTipText = "Token Burn Rate"; return; }
 
     var percent = (int)Math.Round(source.Percent, MidpointRounding.AwayFromZero);
     if (percent == _lastIconPercent && source.FillColour == _lastIconColour) return;
@@ -173,7 +173,7 @@ private void UpdateTrayIcon()
 
     _tray.Icon = new WindowIcon(Services.TrayIconRenderer.Render(
         Math.Clamp(source.Fraction, 0, 1), source.FillColour));
-    _tray.ToolTipText = $"TokenBurnRate — {source.Label} {percent}%";
+    _tray.ToolTipText = $"Token Burn Rate — {source.Label} {percent}%";
 }
 ```
 

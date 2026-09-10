@@ -1,6 +1,6 @@
 ---
 name: token-burn-rate-widget
-description: "TokenBurnRate runs on two machines (home personal, work org-assigned) and must adapt to both"
+description: "Token Burn Rate runs on two machines (home personal, work org-assigned) and must adapt to both"
 metadata: 
   node_type: memory
   type: project
@@ -8,7 +8,7 @@ metadata:
   modified: 2026-09-08T06:20:42.074Z
 ---
 
-TokenBurnRate is an Avalonia always-on-top widget showing live Claude Code and GitHub
+Token Burn Rate is an Avalonia always-on-top widget showing live Claude Code and GitHub
 Copilot usage, published as one self-contained executable per OS.
 
 The user runs it on **two machines** and it must work on both from the same binary:
@@ -35,7 +35,7 @@ being used to develop on.
 VS Code having Copilot signed in says nothing about the widget: VS Code keeps its own
 session encrypted in the OS credential store (DPAPI), which is neither reachable nor
 appropriate to reuse. Token order is env var → `gh` if present → the widget's own
-device-flow token in `%LOCALAPPDATA%\TokenBurnRate\github.json`.
+device-flow token in `%LOCALAPPDATA%\Token-Burn-Rate\github.json`.
 
 **How to apply:** Detect plan/org from the endpoint at runtime and hide or dim what is
 unavailable — no per-machine config file. Never require a CLI install for the app to work. When testing Copilot changes at home, exercise

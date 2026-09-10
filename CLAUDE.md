@@ -1,4 +1,4 @@
-# TokenBurnRate
+# Token Burn Rate
 
 Avalonia always-on-top widget showing live Claude Code and GitHub Copilot usage,
 packaged with Velopack as one installer per OS (win-x64, linux-x64, osx-arm64, osx-x64)
@@ -72,5 +72,5 @@ dotnet build      # local debug
 
 `build-all.sh`'s output is not what end users download; the CI workflow above is what
 produces the actual installer via `vpk pack`. There is no local one-liner for that step —
-run it by hand (`vpk pack --packId TokenBurnRate ...`) against a `publish/<rid>` folder if
+run it by hand (`vpk pack --packId Token-Burn-Rate ...`) against a `publish/<rid>` folder if
 you need to test packaging locally.

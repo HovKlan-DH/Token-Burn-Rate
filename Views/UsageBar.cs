@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
@@ -41,10 +42,32 @@ public sealed class UsageBar : Control
     public static readonly StyledProperty<IBrush?> CaptionHighlightBrushProperty =
         AvaloniaProperty.Register<UsageBar, IBrush?>(nameof(CaptionHighlightBrush));
 
+    /// <summary>
+    /// Fractions (0-1) along the track to draw pacing tick marks at, e.g. the workday
+    /// boundaries within the My Pace week bar - spanning the whole week, days still ahead
+    /// included, not only those elapsed so far. The entry at <see cref="TodayMarkerIndex"/>
+    /// is drawn as "today" - see <see cref="MarkerAccentBrush"/> - the rest as discrete,
+    /// muted ticks regardless of whether they fall before or after it.
+    /// </summary>
+    public static readonly StyledProperty<IReadOnlyList<double>?> MarkersProperty =
+        AvaloniaProperty.Register<UsageBar, IReadOnlyList<double>?>(nameof(Markers));
+
+    /// <summary>
+    /// Index into <see cref="Markers"/> of "today". Negative means there is no "today" to
+    /// mark - a window that has not started yet - and every tick draws muted.
+    /// </summary>
+    public static readonly StyledProperty<int> TodayMarkerIndexProperty =
+        AvaloniaProperty.Register<UsageBar, int>(nameof(TodayMarkerIndex), -1);
+
+    /// <summary>Brush for the "today" marker - see <see cref="TodayMarkerIndex"/>.</summary>
+    public static readonly StyledProperty<IBrush?> MarkerAccentBrushProperty =
+        AvaloniaProperty.Register<UsageBar, IBrush?>(nameof(MarkerAccentBrush));
+
     static UsageBar()
     {
         AffectsRender<UsageBar>(FractionProperty, FillProperty, TrackProperty, CornerProperty,
-            CaptionProperty, CaptionBrushProperty, CaptionHighlightBrushProperty);
+            CaptionProperty, CaptionBrushProperty, CaptionHighlightBrushProperty,
+            MarkersProperty, TodayMarkerIndexProperty, MarkerAccentBrushProperty);
     }
 
     public double Fraction
@@ -87,6 +110,24 @@ public sealed class UsageBar : Control
     {
         get => GetValue(CaptionHighlightBrushProperty);
         set => SetValue(CaptionHighlightBrushProperty, value);
+    }
+
+    public IReadOnlyList<double>? Markers
+    {
+        get => GetValue(MarkersProperty);
+        set => SetValue(MarkersProperty, value);
+    }
+
+    public int TodayMarkerIndex
+    {
+        get => GetValue(TodayMarkerIndexProperty);
+        set => SetValue(TodayMarkerIndexProperty, value);
+    }
+
+    public IBrush? MarkerAccentBrush
+    {
+        get => GetValue(MarkerAccentBrushProperty);
+        set => SetValue(MarkerAccentBrushProperty, value);
     }
 
 
@@ -192,8 +233,64 @@ public sealed class UsageBar : Control
                 new RoundedRect(new Rect(0, barTop, fillWidth, barHeight), radius));
         }
 
+        DrawMarkers(context, w, barTop, barHeight);
+
         if (text is not null)
             context.DrawText(text, new Point(0, textTop));
     }
 
+    /// <summary>
+    /// Discrete tick marks along the track, e.g. the workday boundaries within the My Pace
+    /// week bar - spanning the whole week, so ticks for days still ahead sit past the fill
+    /// alongside those already behind it. The entry at <see cref="TodayMarkerIndex"/> stands
+    /// for "today" and is drawn taller and in <see cref="MarkerAccentBrush"/>; the rest are
+    /// shorter, muted ticks that read as calendar structure without competing with the fill.
+    /// </summary>
+    private void DrawMarkers(DrawingContext context, double w, double barTop, double barHeight)
+    {
+        var markers = Markers;
+        if (markers is null || markers.Count == 0) return;
+
+        // Negative means "no today" - see TodayMarkerIndexProperty. Left as-is so it matches
+        // no index, rather than folded onto the last entry.
+        var todayIndex = TodayMarkerIndex;
+
+        for (var i = 0; i < markers.Count; i++)
+        {
+            var m = markers[i];
+            if (double.IsNaN(m) || double.IsInfinity(m)) continue;
+            m = m < 0 ? 0 : m > 1 ? 1 : m;
+
+            var isCurrent = i == todayIndex;
+            var x = Math.Round(w * m) + 0.5;   // half-pixel for a crisp 1px line
+
+            var tickHeight = isCurrent ? barHeight + 4 : barHeight;
+            var pen = isCurrent ? AccentPen(MarkerAccentBrush) : DiscreteMarkerPen;
+
+            var y0 = barTop + (barHeight - tickHeight) / 2;
+            context.DrawLine(pen, new Point(x, y0), new Point(x, y0 + tickHeight));
+        }
+    }
+
+    private static readonly IPen DiscreteMarkerPen =
+        new Pen(new SolidColorBrush(Color.FromArgb(220, 255, 255, 255)), 1);
+
+    /// <summary>
+    /// The today marker's pen, cached against its brush. Render is on the hot path and the
+    /// accent brush changes only when the user recolours the panel, so allocating a pen per
+    /// paint would churn continuously for a value that is almost always the same one.
+    /// </summary>
+    private IPen? _cachedAccentPen;
+    private IBrush? _cachedAccentBrush;
+
+    private IPen AccentPen(IBrush? accent)
+    {
+        var brush = accent ?? Brushes.OrangeRed;
+        if (_cachedAccentPen is null || !ReferenceEquals(_cachedAccentBrush, brush))
+        {
+            _cachedAccentPen = new Pen(brush, 1.5);
+            _cachedAccentBrush = brush;
+        }
+        return _cachedAccentPen;
+    }
 }

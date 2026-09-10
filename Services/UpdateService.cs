@@ -18,7 +18,21 @@ namespace TokenBurnRate.Services;
 /// </summary>
 public static class UpdateService
 {
-    private const string RepoUrl = "https://github.com/HovKlan-DH/TokenBurnRate";
+    private const string RepoUrl = "https://github.com/HovKlan-DH/Token-Burn-Rate";
+
+    /// <summary>
+    /// The repo and Velopack packId used before the rename to "Token-Burn-Rate".
+    ///
+    /// Velopack identifies an installed app by the packId baked into its own package
+    /// manifest, and matches feed entries against it. A build installed before the rename
+    /// therefore reports <c>TokenBurnRate</c> forever - nothing in an update rewrites it -
+    /// and would never match a release packed under the new id, so the app would sit on its
+    /// installed version silently and permanently. GitHub redirects the renamed repo's URL,
+    /// so the old feed is still reachable and is where those installs are served from until
+    /// the user reinstalls under the new id. New installs never take this path.
+    /// </summary>
+    private const string LegacyAppId = "TokenBurnRate";
+    private const string LegacyRepoUrl = "https://github.com/HovKlan-DH/TokenBurnRate";
 
     /// <summary>
     /// The three release tiers CI ever tags, in ascending stability - see
@@ -55,6 +69,9 @@ public static class UpdateService
         return label.Equals("beta", StringComparison.OrdinalIgnoreCase) ? Tier.Beta : Tier.Alpha;
     }
 
+    private static UpdateManager NewManager(string repoUrl) =>
+        new(new GithubSource(repoUrl, accessToken: null, prerelease: true));
+
     public static void CheckOnLaunch()
     {
         _ = CheckOnLaunchAsync();
@@ -76,17 +93,26 @@ public static class UpdateService
             // by parsed version label ourselves - GithubSource's own "prerelease" switch is
             // a single bool and cannot distinguish alpha from beta, but every release CI
             // makes still has a plain semver label to read that distinction back out of.
-            var manager = new UpdateManager(new GithubSource(RepoUrl, accessToken: null, prerelease: true));
+            var manager = NewManager(RepoUrl);
 
-            DiagLog($"IsInstalled={manager.IsInstalled}, CurrentVersion={manager.CurrentVersion}");
+            DiagLog($"AppId={manager.AppId}, IsInstalled={manager.IsInstalled}, CurrentVersion={manager.CurrentVersion}");
 
             // Throws when running from a build vpk never packaged (e.g. `dotnet run`, or a
             // manually-copied publish folder) - exactly the case where there is nothing
-            // sensible to update, so it is treated the same as "no update found".
+            // sensible to update, so it is treated the same as "no update found". Checked
+            // before the AppId below, which has nothing to report on an unpackaged build.
             if (!manager.IsInstalled)
             {
                 DiagLog("stopping: not installed");
                 return;
+            }
+
+            // A pre-rename install cannot match the new packId - see LegacyAppId - so it is
+            // pointed back at the feed that still carries its own id.
+            if (string.Equals(manager.AppId, LegacyAppId, StringComparison.OrdinalIgnoreCase))
+            {
+                DiagLog($"legacy appId {manager.AppId}: using {LegacyRepoUrl}");
+                manager = NewManager(LegacyRepoUrl);
             }
 
             var update = await manager.CheckForUpdatesAsync().ConfigureAwait(false);
@@ -120,7 +146,7 @@ public static class UpdateService
             if (TrayNotifier.IsSupported)
             {
                 await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-                    TrayNotifier.Show("TokenBurnRate update installed",
+                    TrayNotifier.Show("Token Burn Rate update installed",
                                       "Restarting to finish updating..."));
             }
 
@@ -146,8 +172,8 @@ public static class UpdateService
         {
             var dir = Path.GetDirectoryName(AppState.Path);
             var path = string.IsNullOrWhiteSpace(dir)
-                ? "TokenBurnRate.update-diag.log"
-                : Path.Combine(dir, "TokenBurnRate.update-diag.log");
+                ? "Token-Burn-Rate.update-diag.log"
+                : Path.Combine(dir, "Token-Burn-Rate.update-diag.log");
             File.AppendAllText(path, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {message}{Environment.NewLine}");
         }
         catch

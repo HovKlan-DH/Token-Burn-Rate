@@ -10,9 +10,9 @@
     <ApplicationIcon>Assets\icon.ico</ApplicationIcon>
     <RootNamespace>TokenBurnRate</RootNamespace>
 
-    <AssemblyName>TokenBurnRate</AssemblyName>
-    <Title>$(AssemblyName)</Title>
-    <Product>$(AssemblyName)</Product>
+    <AssemblyName>Token-Burn-Rate</AssemblyName>
+    <Title>Token Burn Rate</Title>
+    <Product>Token Burn Rate</Product>
     <Description>Live Claude Code and GitHub Copilot usage.</Description>
     <Copyright>©2026 Dennis Helligsø</Copyright>
 	<FileVersion>$(AssemblyVersion)</FileVersion>

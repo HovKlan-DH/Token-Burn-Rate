@@ -126,7 +126,7 @@ public static class TrayNotifier
             szInfoTitle = Trim(title, 63),
             szInfo = Trim(message, 255),
             dwInfoFlags = NIIF_NONE,
-            szTip = "TokenBurnRate",
+            szTip = "Token Burn Rate",
         };
 
         // NIM_ADD registers the icon and queues the balloon in one call, but only the first

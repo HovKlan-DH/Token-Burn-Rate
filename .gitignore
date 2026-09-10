@@ -77,7 +77,7 @@ publish/
 # position and its spending history - never something to publish. The GitHub token is not
 # covered here because it deliberately never lives beside the executable; it stays in
 # %LOCALAPPDATA% with owner-only permissions.
-/TokenBurnRate.json
+/Token-Burn-Rate.json
 
 # Crash reports written beside the executable
 *.crash.*.log

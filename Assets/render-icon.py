@@ -1,4 +1,4 @@
-"""Rasterize the TokenBurnRate icon to PNG + ICO using only the stdlib.
+"""Rasterize the Token Burn Rate icon to PNG + ICO using only the stdlib.
 
 Kept dependency-free on purpose: neither ImageMagick nor Inkscape is installed on
 the machines this app is built on, and the icon changes too rarely to justify one.

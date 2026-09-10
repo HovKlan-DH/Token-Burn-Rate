@@ -8,7 +8,7 @@ name: Build, Scan and Release
 # number can simply be re-run once the fix is pushed.
 #
 # The version is not typed in here - it is read from InformationalVersion in
-# TokenBurnRate.csproj, the same property the running app reports. AssemblyVersion
+# Token-Burn-Rate.csproj, the same property the running app reports. AssemblyVersion
 # stays purely numeric (assembly metadata rejects a "-alpha.2" suffix), so
 # InformationalVersion is the one property that carries the real, possibly-suffixed
 # release version - see the csproj. Bumping it before running this workflow is the only
@@ -26,11 +26,11 @@ on:
   workflow_dispatch:
 
 env:
-  PACK_ID: TokenBurnRate
-  EXE_WINDOWS: TokenBurnRate.exe
-  EXE_UNIX: TokenBurnRate
-  PROJECT: TokenBurnRate.csproj
-  SOLUTION: TokenBurnRate.slnx
+  PACK_ID: Token-Burn-Rate
+  EXE_WINDOWS: Token-Burn-Rate.exe
+  EXE_UNIX: Token-Burn-Rate
+  PROJECT: Token-Burn-Rate.csproj
+  SOLUTION: Token-Burn-Rate.slnx
   TFM: net10.0
 
 jobs:
@@ -189,7 +189,7 @@ jobs:
             --channel win `
             --noPortable `
             --icon "Assets/icon.ico" `
-            --packTitle "TokenBurnRate" `
+            --packTitle "Token Burn Rate" `
             --outputDir velopack-output
 
       - name: Sign Velopack installer
@@ -244,7 +244,7 @@ jobs:
         run: |
           vpk pack \
             --packId ${{ env.PACK_ID }} \
-            --packTitle "TokenBurnRate" \
+            --packTitle "Token Burn Rate" \
             --packVersion ${{ needs.determine-version.outputs.version }} \
             --packDir publish/linux-x64 \
             --mainExe ${{ env.EXE_UNIX }} \
@@ -317,7 +317,7 @@ jobs:
         run: |
           vpk pack \
             --packId ${{ env.PACK_ID }} \
-            --packTitle "TokenBurnRate" \
+            --packTitle "Token Burn Rate" \
             --packVersion ${{ needs.determine-version.outputs.version }} \
             --packDir publish/osx-arm64 \
             --mainExe ${{ env.EXE_UNIX }} \
@@ -330,7 +330,7 @@ jobs:
         run: |
           vpk pack \
             --packId ${{ env.PACK_ID }} \
-            --packTitle "TokenBurnRate" \
+            --packTitle "Token Burn Rate" \
             --packVersion ${{ needs.determine-version.outputs.version }} \
             --packDir publish/osx-x64 \
             --mainExe ${{ env.EXE_UNIX }} \
@@ -411,10 +411,10 @@ jobs:
             ${{ steps.prerelease_check.outputs.is_prerelease == 'true' && format('This is a {0} version, and should not be downloaded/used unless if coordinated with the developer.', steps.prerelease_check.outputs.body_label) || format('### Direct downloads for different platforms
             | Platform | File |
             |----------|------|
-            | Windows (x64) | [TokenBurnRate-win-Setup.exe](https://github.com/{0}/releases/download/{1}/TokenBurnRate-win-Setup.exe) |
-            | Linux (x64) | [TokenBurnRate.AppImage](https://github.com/{0}/releases/download/{1}/TokenBurnRate.AppImage) |
-            | macOS Apple Silicon (arm64) | [TokenBurnRate-osx-arm64-Setup.pkg](https://github.com/{0}/releases/download/{1}/TokenBurnRate-osx-arm64-Setup.pkg) |
-            | macOS Intel (x64) | [TokenBurnRate-osx-x64-Setup.pkg](https://github.com/{0}/releases/download/{1}/TokenBurnRate-osx-x64-Setup.pkg) |
+            | Windows (x64) | [Token-Burn-Rate-win-Setup.exe](https://github.com/{0}/releases/download/{1}/Token-Burn-Rate-win-Setup.exe) |
+            | Linux (x64) | [Token-Burn-Rate.AppImage](https://github.com/{0}/releases/download/{1}/Token-Burn-Rate.AppImage) |
+            | macOS Apple Silicon (arm64) | [Token-Burn-Rate-osx-arm64-Setup.pkg](https://github.com/{0}/releases/download/{1}/Token-Burn-Rate-osx-arm64-Setup.pkg) |
+            | macOS Intel (x64) | [Token-Burn-Rate-osx-x64-Setup.pkg](https://github.com/{0}/releases/download/{1}/Token-Burn-Rate-osx-x64-Setup.pkg) |
 
             The Windows and macOS installers are code-signed. Each is installed once per-user
             (no administrator rights needed); after that the widget checks for updates on

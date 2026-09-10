@@ -426,7 +426,7 @@ public partial class MainWindow : Window
             _tray = new TrayIcon
             {
                 Icon = Icon,
-                ToolTipText = "TokenBurnRate",
+                ToolTipText = "Token Burn Rate",
                 IsVisible = true,
                 Menu = new NativeMenu { toggle, iconSourceMenu, exit },
             };
@@ -525,7 +525,7 @@ public partial class MainWindow : Window
                 if (!_lastIconHadSource) return;
                 _lastIconHadSource = false;
                 _tray.Icon = Icon;
-                _tray.ToolTipText = "TokenBurnRate";
+                _tray.ToolTipText = "Token Burn Rate";
                 return;
             }
 
@@ -576,7 +576,7 @@ public partial class MainWindow : Window
         if (Services.AppState.Load().TrayNoticeShown == true) return;
 
         var shown = Services.TrayNotifier.Show(
-            "TokenBurnRate is still running.",
+            "Token Burn Rate is still running.",
             "The application is visible in the tray area. Click its icon to bring it back, "
             + "or right-click for Exit.");
 

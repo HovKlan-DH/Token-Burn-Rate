@@ -7,8 +7,8 @@
         mc:Ignorable="d"
         x:Class="TokenBurnRate.MainWindow"
         x:DataType="vm:MainViewModel"
-        Title="TokenBurnRate"
-        Icon="avares://TokenBurnRate/Assets/icon.ico"
+        Title="Token Burn Rate"
+        Icon="avares://Token-Burn-Rate/Assets/icon.ico"
         Width="340" SizeToContent="Height"
         MinWidth="300" MaxWidth="340"
         Topmost="{Binding Pinned}"
@@ -42,7 +42,10 @@
                        Track="#3A3D44"
                        CaptionBrush="{Binding CaptionColour, Converter={StaticResource Brush}}"
                        CaptionHighlightBrush="{Binding CaptionHighlightColour, Converter={StaticResource Brush}}"
-                       Fill="{Binding FillColour, Converter={StaticResource Brush}}"/>
+                       Fill="{Binding FillColour, Converter={StaticResource Brush}}"
+                       Markers="{Binding Markers}"
+                       TodayMarkerIndex="{Binding TodayMarkerIndex}"
+                       MarkerAccentBrush="#F85149"/>
         <TextBlock Grid.Column="2" Text="{Binding ValueText}" Classes="barvalue"
                    VerticalAlignment="Bottom" Margin="8,0,0,-4"
                    HorizontalAlignment="Right"
@@ -127,6 +130,23 @@
                     IsEnabled="{Binding CanDecreaseFontScale}"/>
           <MenuItem Name="ResetTextItem" Header="Reset to default"/>
         </MenuItem>
+        <MenuItem Header="Workdays in a week"
+                  ToolTip.Tip="How many days count as a workday for GitHub Copilot : My Pace - the first N days starting Monday">
+          <MenuItem Header="1" ToggleType="Radio" GroupName="WorkDaysPerWeek"
+                    IsChecked="{Binding IsWorkDays1, Mode=TwoWay}"/>
+          <MenuItem Header="2" ToggleType="Radio" GroupName="WorkDaysPerWeek"
+                    IsChecked="{Binding IsWorkDays2, Mode=TwoWay}"/>
+          <MenuItem Header="3" ToggleType="Radio" GroupName="WorkDaysPerWeek"
+                    IsChecked="{Binding IsWorkDays3, Mode=TwoWay}"/>
+          <MenuItem Header="4" ToggleType="Radio" GroupName="WorkDaysPerWeek"
+                    IsChecked="{Binding IsWorkDays4, Mode=TwoWay}"/>
+          <MenuItem Header="5" ToggleType="Radio" GroupName="WorkDaysPerWeek"
+                    IsChecked="{Binding IsWorkDays5, Mode=TwoWay}"/>
+          <MenuItem Header="6" ToggleType="Radio" GroupName="WorkDaysPerWeek"
+                    IsChecked="{Binding IsWorkDays6, Mode=TwoWay}"/>
+          <MenuItem Header="7" ToggleType="Radio" GroupName="WorkDaysPerWeek"
+                    IsChecked="{Binding IsWorkDays7, Mode=TwoWay}"/>
+        </MenuItem>
         <Separator/>
         <MenuItem Header="Start with the computer" ToggleType="CheckBox"
                   IsChecked="{Binding AutostartEnabled, Mode=TwoWay}"
@@ -143,7 +163,7 @@
                   ToolTip.Tip="Open the folder holding the executable and the state file"/>
         <MenuItem Header="About">
           <MenuItem Name="ProjectPageItem" Header="Project page on GitHub"
-                    ToolTip.Tip="https://github.com/HovKlan-DH/TokenBurnRate"/>
+                    ToolTip.Tip="https://github.com/HovKlan-DH/Token-Burn-Rate"/>
           <Separator/>
           <!-- Non-interactive: just tells the user which build they are running, now that
                updates apply themselves silently in the background (see UpdateService). -->
@@ -151,7 +171,7 @@
         </MenuItem>
         <Separator/>
         <MenuItem Name="ExitItem" Header="Exit application"
-                  ToolTip.Tip="Quit TokenBurnRate completely"/>
+                  ToolTip.Tip="Quit Token Burn Rate completely"/>
       </ContextMenu>
     </Border.ContextMenu>
     <LayoutTransformControl Name="ScaleRoot">

@@ -37,7 +37,12 @@ public sealed class CopilotPacingService
     /// Builds the Day / Week / Month pacing bars, or null when no bucket meters credits
     /// (for example a plan where everything is unlimited).
     /// </summary>
-    public CopilotPacing? Build(CopilotStatus status, DateTime now)
+    /// <param name="workDaysPerWeek">
+    /// The first N days of the week (from Monday) that count as workdays - see
+    /// <see cref="BusinessDays"/>. Defaults to 5 (Monday-Friday).
+    /// </param>
+    public CopilotPacing? Build(CopilotStatus status, DateTime now,
+        int workDaysPerWeek = BusinessDays.DefaultWorkDaysPerWeek)
     {
         var bucket = SelectCreditBucket(status);
         if (bucket is null) return null;
@@ -45,8 +50,8 @@ public sealed class CopilotPacingService
         var remaining = Math.Max(0, bucket.Entitlement - bucket.Used);
         var state = LoadOrRoll(remaining, now);
 
-        var daysLeftInPeriod = BusinessDays.RemainingInPeriod(now, status.ResetDate);
-        var daysLeftInWeek = BusinessDays.RemainingInWeek(now, status.ResetDate);
+        var daysLeftInPeriod = BusinessDays.RemainingInPeriod(now, status.ResetDate, workDaysPerWeek);
+        var daysLeftInWeek = BusinessDays.RemainingInWeek(now, status.ResetDate, workDaysPerWeek);
 
         // Allowance per business day, from what is left right now.
         var perDay = remaining / daysLeftInPeriod;
@@ -60,6 +65,12 @@ public sealed class CopilotPacingService
         // it, so the bar measures the whole week rather than only its remainder.
         var weekBudget = perDay * daysLeftInWeek + usedThisWeek;
 
+        // Today's position within the week, for the pacing marks on the week bar: elapsed
+        // days (Monday..today) plus the days still ahead of us (today..last workday) minus
+        // the day they both count gives the week's total workday span.
+        var workdayIndex = BusinessDays.ElapsedInWeek(now, workDaysPerWeek);
+        var workdaysInWeek = workdayIndex + daysLeftInWeek - 1;
+
         return new CopilotPacing
         {
             Entitlement = bucket.Entitlement,
@@ -69,6 +80,8 @@ public sealed class CopilotPacingService
             UsedThisWeek = usedThisWeek,
             WeekBudget = weekBudget,
             UsedThisPeriod = bucket.Used,
+            WorkdayIndexInWeek = workdayIndex,
+            WorkdaysInWeek = workdaysInWeek,
         };
     }
 

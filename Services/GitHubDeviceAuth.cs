@@ -37,7 +37,7 @@ public sealed class GitHubDeviceAuth
     public GitHubDeviceAuth(HttpClient? http = null)
     {
         _http = http ?? new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-        if (!_http.DefaultRequestHeaders.UserAgent.TryParseAdd("TokenBurnRate/1.0"))
+        if (!_http.DefaultRequestHeaders.UserAgent.TryParseAdd("Token-Burn-Rate/1.0"))
         {
             // A shared client may already carry a user agent; that is fine.
         }
@@ -140,9 +140,15 @@ public sealed class GitHubDeviceAuth
         {
             var dir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "TokenBurnRate");
+                AppState.AppFolderName);
             Directory.CreateDirectory(dir);
-            return Path.Combine(dir, "github.json");
+
+            var path = Path.Combine(dir, "github.json");
+
+            // Carried over from the pre-rename folder, so the rename does not force a fresh
+            // sign-in and leave a live token behind - see LegacyPaths.
+            LegacyPaths.Adopt(path, Path.Combine(LegacyPaths.LocalAppDataFolder, "github.json"));
+            return path;
         }
     }
 

@@ -88,6 +88,14 @@ public sealed class AppState
     public double? FontScale { get; set; }
 
     /// <summary>
+    /// How many days of the week count as workdays for the "My Pace" calculation - the
+    /// first N days starting Monday, set from the context menu's "Workdays in a week".
+    /// Absent means never set, and the widget defaults to 5 (Monday-Friday).
+    /// </summary>
+    [JsonPropertyName("workDaysPerWeek")]
+    public int? WorkDaysPerWeek { get; set; }
+
+    /// <summary>
     /// Seconds between refreshes. Nothing in the UI offers this: it exists for the rare
     /// case of wanting a slower or faster poll than the default, set by editing the file.
     ///
@@ -173,7 +181,7 @@ public sealed class AppState
     public static string Path => _path.Value;
 
     /// <summary>
-    /// Beside the executable, named after it (TokenBurnRate.exe -> TokenBurnRate.json),
+    /// Beside the executable, named after it (Token-Burn-Rate.exe -> Token-Burn-Rate.json),
     /// unless that directory is not writable or the app is Velopack-installed - see the
     /// class comment for why an installed build must not write beside its exe.
     /// </summary>
@@ -200,10 +208,20 @@ public sealed class AppState
 
         var appData = System.IO.Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "TokenBurnRate");
+            AppFolderName);
         Directory.CreateDirectory(appData);
-        return System.IO.Path.Combine(appData, "TokenBurnRate.json");
+
+        var path = System.IO.Path.Combine(appData, "Token-Burn-Rate.json");
+        LegacyPaths.Adopt(path, System.IO.Path.Combine(
+            LegacyPaths.LocalAppDataFolder, "TokenBurnRate.json"));
+        return path;
     }
+
+    /// <summary>
+    /// The per-user folder this app owns, under %LOCALAPPDATA% / ~/.local/share. Shared with
+    /// <see cref="GitHubDeviceAuth"/>, which keeps its token in the same folder.
+    /// </summary>
+    public const string AppFolderName = "Token-Burn-Rate";
 
     /// <summary>
     /// Whether this build is running from a Velopack install. Detected from the layout it

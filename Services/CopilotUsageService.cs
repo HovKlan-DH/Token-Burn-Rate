@@ -34,7 +34,7 @@ public sealed class CopilotUsageService
     public CopilotUsageService(HttpClient? http = null)
     {
         _http = http ?? new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-        _http.DefaultRequestHeaders.UserAgent.ParseAdd("TokenBurnRate/1.0");
+        _http.DefaultRequestHeaders.UserAgent.ParseAdd("Token-Burn-Rate/1.0");
         _http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
     }
 

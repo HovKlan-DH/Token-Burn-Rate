@@ -21,12 +21,17 @@ public static class CheckInService
     private const string Endpoint = "https://mailscan.dk/app-checkin/";
 
     /// <summary>
-    /// The server keys the "is this our app" check off a User-Agent containing
-    /// "TokenBurnRate " and matching its own whitelist regex
-    /// (<c>^[a-zA-Z0-9 ,.#()*\[\]!:/-]+$</c>), so the version string must stick to that set.
+    /// The server keys the "is this our app" check off a User-Agent starting "TBR " and
+    /// matching its own whitelist regex (<c>^[a-zA-Z0-9 ,.#()*\[\]!:/-]+$</c>), so the
+    /// version string must stick to that set.
+    ///
+    /// "TBR" is the server's whitelisted string, not an abbreviation of the app name that
+    /// follows a rename: changing it here requires the same change on the PHP side, or
+    /// check-ins are rejected and - since the response status is discarded - silently lost.
+    /// The same string is sent again as the "control" field below.
     /// </summary>
     private static string UserAgent =>
-        $"TokenBurnRate {AppVersion}";
+        $"TBR {AppVersion}";
 
     private static string AppVersion =>
         typeof(CheckInService).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
@@ -59,7 +64,7 @@ public static class CheckInService
             {
                 ["osHighlevel"] = OsHighLevel,
                 ["osVersion"] = OsVersion,
-                ["control"] = "TokenBurnRate",
+                ["control"] = "TBR",
             });
 
             using var resp = await http.PostAsync(Endpoint, content).ConfigureAwait(false);

@@ -19,8 +19,11 @@ namespace TokenBurnRate.Services;
 /// </summary>
 public static class AutostartService
 {
-    private const string AppId = "TokenBurnRate";
-    private const string DisplayName = "TokenBurnRate";
+    private const string AppId = "Token-Burn-Rate";
+    private const string DisplayName = "Token Burn Rate";
+
+    /// <summary>The id used before the app was renamed - see <see cref="RemoveLegacyEntry"/>.</summary>
+    private const string LegacyAppId = "TokenBurnRate";
 
     /// <summary>False when the platform is unsupported or the executable cannot be located.</summary>
     public static bool IsSupported =>
@@ -93,6 +96,44 @@ public static class AutostartService
         return false;
     }
 
+    /// <summary>
+    /// Deletes the autostart entry written under the pre-rename id.
+    ///
+    /// The rename changed the registry value name, the plist label and the .desktop
+    /// filename, so an existing install's old entry is no longer the one this service reads
+    /// or writes. Left in place it would still fire at every login, launching the exe path it
+    /// was written with, while the toggle in the menu reported autostart as off - and turning
+    /// the toggle on then off again would not clear it, because Set() only ever touches the
+    /// new id. The entry is removed rather than rewritten: whether autostart should be on is
+    /// already answered by <see cref="AppState.AutostartInitialised"/> and the new-id entry.
+    ///
+    /// Safe to call on every launch - it is a no-op once the old entry is gone.
+    /// </summary>
+    public static void RemoveLegacyEntry()
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RunKey, writable: true);
+                key?.DeleteValue(LegacyAppId, throwOnMissingValue: false);
+            }
+            else if (OperatingSystem.IsMacOS())
+            {
+                if (File.Exists(LegacyMacPlistPath)) File.Delete(LegacyMacPlistPath);
+            }
+            else if (OperatingSystem.IsLinux())
+            {
+                if (File.Exists(LegacyLinuxDesktopPath)) File.Delete(LegacyLinuxDesktopPath);
+            }
+        }
+        catch (Exception)
+        {
+            // Best effort: a locked hive or read-only profile leaves the stale entry, which
+            // is no worse than not having tried.
+        }
+    }
+
     /// <summary>Returns true when the state afterwards matches what was asked for.</summary>
     public static bool Set(bool enabled)
     {
@@ -159,7 +200,7 @@ public static class AutostartService
         if (string.IsNullOrWhiteSpace(value)) return false;
 
         // Compare the path the entry actually points at, not a substring of the line. A
-        // Contains test matches a stale "...\TokenBurnRate.exe.bak" or a wrapper that names
+        // Contains test matches a stale "...\Token-Burn-Rate.exe.bak" or a wrapper that names
         // this exe as an argument, and would then report autostart as on when it is not.
         return string.Equals(ParseExecutable(value!), ExecutablePath!,
                              StringComparison.OrdinalIgnoreCase);
@@ -202,9 +243,13 @@ public static class AutostartService
 
     // ---- macOS -------------------------------------------------------------------------
 
-    private static string MacPlistPath => Path.Combine(
+    private static string MacPlistPath => MacPlistPathFor(AppId);
+
+    private static string LegacyMacPlistPath => MacPlistPathFor(LegacyAppId);
+
+    private static string MacPlistPathFor(string id) => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        "Library", "LaunchAgents", $"com.{AppId.ToLowerInvariant()}.plist");
+        "Library", "LaunchAgents", $"com.{id.ToLowerInvariant()}.plist");
 
     private static void MacSet(bool enabled)
     {
@@ -235,18 +280,19 @@ public static class AutostartService
 
     // ---- Linux -------------------------------------------------------------------------
 
-    private static string LinuxDesktopPath
+    private static string LinuxDesktopPath => LinuxDesktopPathFor(AppId);
+
+    private static string LegacyLinuxDesktopPath => LinuxDesktopPathFor(LegacyAppId);
+
+    private static string LinuxDesktopPathFor(string id)
     {
-        get
+        var configHome = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
+        if (string.IsNullOrWhiteSpace(configHome))
         {
-            var configHome = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
-            if (string.IsNullOrWhiteSpace(configHome))
-            {
-                configHome = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config");
-            }
-            return Path.Combine(configHome, "autostart", $"{AppId}.desktop");
+            configHome = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config");
         }
+        return Path.Combine(configHome, "autostart", $"{id}.desktop");
     }
 
     private static void LinuxSet(bool enabled)

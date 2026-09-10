@@ -1,17 +1,17 @@
 ---
 name: velopack-auto-update
-description: "TokenBurnRate uses Velopack for auto-update, mirroring Classic Repair Toolbox - packaging shape and tradeoffs"
+description: "Token Burn Rate uses Velopack for auto-update, mirroring Classic Repair Toolbox - packaging shape and tradeoffs"
 metadata:
   type: project
 ---
 
-TokenBurnRate switched from raw self-contained single-file exes to Velopack-packaged
+Token Burn Rate switched from raw self-contained single-file exes to Velopack-packaged
 installers (one per OS), added 2026-09-09, mirroring the sibling Classic-Repair-Toolbox
-project's setup (Velopack 1.2.0, `GithubSource` against `HovKlan-DH/TokenBurnRate`).
+project's setup (Velopack 1.2.0, `GithubSource` against `HovKlan-DH/Token-Burn-Rate`).
 
 **The packaging shape changed, not just added a feature.** Velopack's `vpk pack` takes an
 *unpacked* publish folder as input and produces the single downloadable file itself
-(`TokenBurnRate-win-Setup.exe`, `TokenBurnRate.AppImage`, `TokenBurnRate-osx-<arch>-Setup.pkg`).
+(`Token-Burn-Rate-win-Setup.exe`, `Token-Burn-Rate.AppImage`, `Token-Burn-Rate-osx-<arch>-Setup.pkg`).
 So `PublishSingleFile`/`IncludeNativeLibrariesForSelfExtract`/`EnableCompressionInSingleFile`
 were removed from the csproj - they're incompatible with what vpk needs as input. The "one
 file only" promise moved from "the installed binary is one file" to "the thing you download
