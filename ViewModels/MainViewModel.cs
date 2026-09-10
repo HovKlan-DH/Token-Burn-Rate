@@ -1393,7 +1393,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public void OpenProjectPage() => TryOpenBrowser(ProjectUrl);
 
     /// <summary>Where the Claude panel's install link sends people when Claude Code is not found.</summary>
-    public const string ClaudeDownloadUrl = "https://code.claude.com/docs/overview";
+    public const string ClaudeDownloadUrl = "https://code.claude.com/docs/en/overview";
 
     /// <summary>Opens the Claude Code install docs in the default browser.</summary>
     public void OpenClaudeDownloadPage() => TryOpenBrowser(ClaudeDownloadUrl);

@@ -37,12 +37,16 @@ public static class AutostartService
     ///
     /// On a Velopack install the running exe is the versioned copy inside the current
     /// "app-x.y.z" folder, which an update replaces; the stub one level up keeps its path
-    /// across updates, so that is what gets registered when it exists.
+    /// across updates, so that is what gets registered when it exists. The Linux build ships
+    /// as an AppImage instead, which never has that stub - see AppImagePath for its own,
+    /// differently-shaped stability problem.
     /// </summary>
     private static string? ExecutablePath
     {
         get
         {
+            if (OperatingSystem.IsLinux() && AppImagePath is { } appImage) return appImage;
+
             var path = Environment.ProcessPath;
             if (string.IsNullOrWhiteSpace(path)) return null;
 
@@ -50,6 +54,96 @@ public static class AutostartService
             if (name.Equals("dotnet", StringComparison.OrdinalIgnoreCase)) return null;
 
             return VelopackStub(path) ?? path;
+        }
+    }
+
+    /// <summary>
+    /// The AppImage file itself, when running as one - null otherwise (a Linux dev build run
+    /// with `dotnet run`, or any non-Linux OS).
+    ///
+    /// An AppImage runs by mounting itself via FUSE and exec'ing the binary from inside that
+    /// mount, so Environment.ProcessPath resolves to something like
+    /// "/tmp/.mount_AbCdEf/usr/bin/Token-Burn-Rate" - a path that is unique to this one
+    /// running process and stops existing the moment it exits, let alone across a reboot. An
+    /// autostart entry written with that path silently launches nothing at the next login: the
+    /// exec target is already gone by the time the session reads the .desktop file.
+    ///
+    /// AppImage's runtime is documented to set $APPIMAGE in every process it launches to the
+    /// real, stable path of the .AppImage file - the same value Velopack's own Linux locator
+    /// uses for this exact reason - but that turned out not to hold on every system: a real
+    /// install was observed with a live process mounted under /tmp/.mount_* whose entire
+    /// environment (confirmed via /proc/&lt;pid&gt;/environ) had no APPIMAGE entry at all, for
+    /// reasons this could not pin down (older or repackaged runtime, FUSE mount reuse, or
+    /// something else in that session). $ARGV0 - a second, less commonly known variable the
+    /// same runtime sets to how it was originally invoked, specifically because argv[0]
+    /// handling is inconsistent across shells and launchers - is tried next for the same
+    /// reason it might independently survive where $APPIMAGE did not. If both are absent, the
+    /// last resort reads argv[0] straight out of /proc/self/cmdline: .NET's own
+    /// Environment.ProcessPath and GetCommandLineArgs()[0] are not usable here because the
+    /// host resolves them to the real exe path (the mount path we are trying to avoid), not
+    /// the raw argv[0] the process was actually invoked with.
+    /// </summary>
+    private static string? AppImagePath
+    {
+        get
+        {
+            if (EnvPath("APPIMAGE") is { } appImage && ResolveCandidatePath(appImage) is { } resolved) return resolved;
+            if (EnvPath("ARGV0") is { } argv0) return ResolveCandidatePath(argv0);
+            if (RawCmdlineArgv0() is { } cmdline) return ResolveCandidatePath(cmdline);
+            return null;
+        }
+    }
+
+    private static string? EnvPath(string variable)
+    {
+        var value = Environment.GetEnvironmentVariable(variable);
+        return string.IsNullOrWhiteSpace(value) ? null : value;
+    }
+
+    /// <summary>
+    /// Turns a possibly-relative candidate path ($APPIMAGE, $ARGV0, or raw argv[0]) into an
+    /// absolute one and rejects it if it does not exist or still names a spot inside the
+    /// transient mount - a stale or unusual runtime could hand back the mount path from any
+    /// of these three sources, and registering that would recreate the exact bug this whole
+    /// fallback chain exists to avoid.
+    /// </summary>
+    private static string? ResolveCandidatePath(string candidate)
+    {
+        try
+        {
+            var owd = EnvPath("OWD");   // runtime's "original working directory", when set
+            var full = Path.IsPathRooted(candidate)
+                ? candidate
+                : Path.GetFullPath(candidate, owd ?? Directory.GetCurrentDirectory());
+
+            if (!File.Exists(full)) return null;
+            if (full.Contains("/.mount_", StringComparison.Ordinal)) return null;
+
+            return full;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// argv[0] as the kernel actually recorded it, not as .NET's host has since resolved it.
+    /// /proc/self/cmdline is NUL-separated with no trailing delimiter guaranteed, so the first
+    /// field runs up to the first NUL or, failing that, the whole buffer.
+    /// </summary>
+    private static string? RawCmdlineArgv0()
+    {
+        try
+        {
+            var bytes = File.ReadAllBytes("/proc/self/cmdline");
+            var end = Array.IndexOf(bytes, (byte)0);
+            var raw = System.Text.Encoding.UTF8.GetString(bytes, 0, end >= 0 ? end : bytes.Length);
+            return string.IsNullOrEmpty(raw) ? null : raw;
+        }
+        catch (Exception)
+        {
+            return null;
         }
     }
 
