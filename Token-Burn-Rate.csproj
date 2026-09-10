@@ -18,8 +18,8 @@
 	<FileVersion>$(AssemblyVersion)</FileVersion>
 	<Version>$(InformationalVersion)</Version>
 
-	<AssemblyVersion>0.1.0</AssemblyVersion>
-    <InformationalVersion>0.1.0-alpha.18</InformationalVersion>
+	<AssemblyVersion>0.5.0</AssemblyVersion>
+    <InformationalVersion>0.5.0-alpha.1</InformationalVersion>
 	<!--
 	<InformationalVersion>$(AssemblyVersion</InformationalVersion>
 	-->
