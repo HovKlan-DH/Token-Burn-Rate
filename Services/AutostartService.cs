@@ -37,12 +37,16 @@ public static class AutostartService
     ///
     /// On a Velopack install the running exe is the versioned copy inside the current
     /// "app-x.y.z" folder, which an update replaces; the stub one level up keeps its path
-    /// across updates, so that is what gets registered when it exists.
+    /// across updates, so that is what gets registered when it exists. The Linux build ships
+    /// as an AppImage instead, which never has that stub - see AppImagePath for its own,
+    /// differently-shaped stability problem.
     /// </summary>
     private static string? ExecutablePath
     {
         get
         {
+            if (OperatingSystem.IsLinux() && AppImagePath is { } appImage) return appImage;
+
             var path = Environment.ProcessPath;
             if (string.IsNullOrWhiteSpace(path)) return null;
 
@@ -51,6 +55,135 @@ public static class AutostartService
 
             return VelopackStub(path) ?? path;
         }
+    }
+
+    /// <summary>
+    /// The AppImage file itself, when running as one - null otherwise (a Linux dev build run
+    /// with `dotnet run`, or any non-Linux OS).
+    ///
+    /// An AppImage runs by mounting itself via FUSE and exec'ing the binary from inside that
+    /// mount, so Environment.ProcessPath resolves to something like
+    /// "/tmp/.mount_AbCdEf/usr/bin/Token-Burn-Rate" - a path that is unique to this one
+    /// running process and stops existing the moment it exits, let alone across a reboot. An
+    /// autostart entry written with that path silently launches nothing at the next login: the
+    /// exec target is already gone by the time the session reads the .desktop file.
+    ///
+    /// AppImage's runtime is documented to set $APPIMAGE in every process it launches to the
+    /// real, stable path of the .AppImage file - the same value Velopack's own Linux locator
+    /// uses for this exact reason - but that turned out not to hold on the machine this was
+    /// diagnosed on: a live, correctly mounted process there had no APPIMAGE entry anywhere
+    /// in its environment (confirmed via /proc/&lt;pid&gt;/environ). $TARGET_APPIMAGE covers the
+    /// same ground for a runtime invoked through a wrapper, and is equally free.
+    ///
+    /// Both are the runtime passing information along, though, so both can go missing
+    /// together - which is why the real answer is MountSourcePath, asking the kernel what
+    /// this process is running out of instead of trusting anything to have been handed down.
+    /// Returning null rather than falling back to Environment.ProcessPath is deliberate: the
+    /// mount path is precisely the wrong answer, and no autostart entry at all beats one that
+    /// silently launches nothing.
+    /// </summary>
+    private static string? AppImagePath
+    {
+        get
+        {
+            if (EnvPath("APPIMAGE") is { } appImage && ResolveCandidatePath(appImage) is { } fromEnv) return fromEnv;
+            if (EnvPath("TARGET_APPIMAGE") is { } target && ResolveCandidatePath(target) is { } fromTarget) return fromTarget;
+            if (MountSourcePath() is { } fromMount) return fromMount;
+            return null;
+        }
+    }
+
+    private static string? EnvPath(string variable)
+    {
+        var value = Environment.GetEnvironmentVariable(variable);
+        return string.IsNullOrWhiteSpace(value) ? null : value;
+    }
+
+    /// <summary>
+    /// Turns a possibly-relative candidate path (an environment variable, or the mount
+    /// absolute one and rejects it if it does not exist or still names a spot inside the
+    /// transient mount - a stale or unusual runtime could hand back the mount path from any
+    /// of these three sources, and registering that would recreate the exact bug this whole
+    /// fallback chain exists to avoid.
+    /// </summary>
+    private static string? ResolveCandidatePath(string candidate)
+    {
+        try
+        {
+            var owd = EnvPath("OWD");   // runtime's "original working directory", when set
+            var full = Path.IsPathRooted(candidate)
+                ? candidate
+                : Path.GetFullPath(candidate, owd ?? Directory.GetCurrentDirectory());
+
+            if (!File.Exists(full)) return null;
+            if (full.Contains("/.mount_", StringComparison.Ordinal)) return null;
+
+            return full;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The file backing the FUSE mount this process is running out of - which, for an
+    /// AppImage, is the .AppImage itself.
+    ///
+    /// The last resort, and the only one that cannot be defeated by a lost environment
+    /// variable, because the kernel is recording it rather than the runtime passing it along:
+    /// the AppImage runtime hands realpath("/proc/self/exe") to squashfuse as the mount
+    /// source, and /proc/self/mountinfo reports it verbatim. Every path-shaped alternative
+    /// was tried first and does not survive Velopack's own AppRun, a shell script ending in
+    /// `exec "${EXEC}" "$@"` - that exec overwrites argv[0] with the in-mount binary, so
+    /// neither /proc/self/cmdline nor $ARGV0 can ever name the .AppImage.
+    ///
+    /// Lines look like (fields elided):
+    ///     462 30 0:48 / /tmp/.mount_abc123 ro,... - fuse.app /home/u/App.AppImage ro,...
+    /// so the mount point is field 5, and the source is the second field after the " - "
+    /// separator, whose position varies with the optional fields before it. Paths are escaped
+    /// octally for the few characters that would otherwise break the field split.
+    /// </summary>
+    private static string? MountSourcePath()
+    {
+        try
+        {
+            // Only the mount this process is actually executing from counts: a machine can
+            // have several AppImages mounted at once, and the others are not us.
+            var exe = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(exe)) return null;
+
+            foreach (var line in File.ReadLines("/proc/self/mountinfo"))
+            {
+                var separator = line.IndexOf(" - ", StringComparison.Ordinal);
+                if (separator < 0) continue;
+
+                var left = line[..separator].Split(' ');
+                if (left.Length < 5) continue;
+
+                var mountPoint = Unescape(left[4]);
+                if (mountPoint.Length == 0 || !exe.StartsWith(mountPoint, StringComparison.Ordinal)) continue;
+
+                var right = line[(separator + 3)..].Split(' ');
+                if (right.Length < 2) continue;
+
+                return ResolveCandidatePath(Unescape(right[1]));
+            }
+        }
+        catch (Exception)
+        {
+            // No procfs, an unreadable mount table, or a layout this does not recognise:
+            // autostart simply stays unavailable rather than registering a guess.
+        }
+
+        return null;
+
+        // mountinfo escapes space, tab, newline and backslash as octal, and nothing else.
+        static string Unescape(string field) => field
+            .Replace("\\040", " ", StringComparison.Ordinal)
+            .Replace("\\011", "\t", StringComparison.Ordinal)
+            .Replace("\\012", "\n", StringComparison.Ordinal)
+            .Replace("\\134", "\\", StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -134,6 +267,40 @@ public static class AutostartService
         }
     }
 
+    /// <summary>
+    /// Rewrites an autostart entry that exists but no longer points at this executable.
+    ///
+    /// Only ever repairs, never enables: an entry that is simply absent means the user turned
+    /// autostart off, and resurrecting that would override a deliberate choice with a guess.
+    /// The condition is exactly "the file is there and IsEnabled() disagrees with it", which
+    /// is what a path gone stale looks like from here - an entry naming a moved .AppImage, or
+    /// one of the /tmp/.mount_* paths written before AppImagePath learned to read the mount
+    /// table. Both leave the user with autostart they switched on and a login that ignores it.
+    /// </summary>
+    public static void RepairIfStale()
+    {
+        try
+        {
+            if (ExecutablePath is null) return;
+
+            var entry = OperatingSystem.IsWindows() ? null
+                      : OperatingSystem.IsMacOS() ? MacPlistPath
+                      : OperatingSystem.IsLinux() ? LinuxDesktopPath
+                      : null;
+
+            // Windows keeps its entry in the registry rather than a file, and stores a plain
+            // absolute path that no update relocates, so there is nothing here to go stale.
+            if (entry is null || !File.Exists(entry)) return;
+            if (IsEnabled()) return;
+
+            Set(true);
+        }
+        catch (Exception)
+        {
+            // A repair that cannot be made leaves things exactly as they were.
+        }
+    }
+
     /// <summary>Returns true when the state afterwards matches what was asked for.</summary>
     public static bool Set(bool enabled)
     {
@@ -146,12 +313,67 @@ public static class AutostartService
             else if (OperatingSystem.IsLinux()) LinuxSet(enabled);
             else return false;
 
-            return IsEnabled() == enabled;
+            var applied = IsEnabled() == enabled;
+            if (OperatingSystem.IsLinux()) WriteLinuxDiagnostic(enabled, applied);
+            return applied;
         }
         catch (Exception)
         {
             return false;
         }
+    }
+
+    /// <summary>
+    /// Records what the AppImage path resolution actually saw, beside the state file.
+    ///
+    /// Autostart failing on Linux is invisible from inside the app: it is a GUI process with
+    /// no console, the failure only shows up a reboot later, and the inputs that decide the
+    /// registered path (three environment variables and the raw argv[0]) are all gone by the
+    /// time anyone can look. Two rounds of guessing at this from the outside each cost a full
+    /// release-and-reboot cycle, so the app writes down its own reasoning instead. Rewritten
+    /// on every toggle, so it always describes the entry currently on disk.
+    /// </summary>
+    private static void WriteLinuxDiagnostic(bool requested, bool applied)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(AppState.Path);
+            if (string.IsNullOrWhiteSpace(dir)) return;
+
+            var text = $"""
+                Token Burn Rate - Linux autostart diagnostic
+                ===========================================
+                When              : {DateTime.Now:yyyy-MM-dd HH:mm:ss}
+                Requested         : {(requested ? "enable" : "disable")}
+                Reported as applied: {applied}
+
+                Resolution inputs
+                -----------------
+                $APPIMAGE         : {Describe(Environment.GetEnvironmentVariable("APPIMAGE"))}
+                $TARGET_APPIMAGE  : {Describe(Environment.GetEnvironmentVariable("TARGET_APPIMAGE"))}
+                $OWD              : {Describe(Environment.GetEnvironmentVariable("OWD"))}
+                mount source      : {Describe(MountSourcePath())}
+                ProcessPath       : {Describe(Environment.ProcessPath)}
+                CurrentDirectory  : {Describe(Directory.GetCurrentDirectory())}
+
+                Outcome
+                -------
+                AppImagePath      : {Describe(AppImagePath)}
+                ExecutablePath    : {Describe(ExecutablePath)}
+                Autostart file    : {LinuxDesktopPath}
+                File exists       : {File.Exists(LinuxDesktopPath)}
+
+                """;
+
+            File.WriteAllText(Path.Combine(dir, "autostart-diagnostic.txt"), text);
+        }
+        catch (Exception)
+        {
+            // Diagnostics must never break the thing they are diagnosing.
+        }
+
+        static string Describe(string? value) =>
+            string.IsNullOrWhiteSpace(value) ? "(not set)" : value;
     }
 
     /// <summary>
@@ -316,15 +538,30 @@ public static class AutostartService
     }
 
     /// <summary>
-    /// Quotes a path for a Desktop Entry Exec key, per the XDG spec.
+    /// The characters the Desktop Entry spec reserves inside an Exec value. A path holding
+    /// any of them has to be quoted; one holding none must not be, see EscapeExecArgument.
+    /// </summary>
+    private static readonly char[] ExecReservedChars =
+        " \t\"'\\<>~|&;$*?#()`".ToCharArray();
+
+    /// <summary>
+    /// Renders a path for a Desktop Entry Exec key, quoting it only when the spec actually
+    /// requires it.
     ///
-    /// Plain double quotes are not enough: inside a quoted argument the spec requires
-    /// <c>"</c>, <c>`</c>, <c>$</c> and <c>\</c> to be escaped with a backslash. An
-    /// unescaped path containing any of them yields an entry the session manager either
-    /// ignores or mis-splits, and autostart then silently does nothing.
+    /// Quoting unconditionally is spec-legal but walks into three separate downstream bugs,
+    /// and Ubuntu 22.04+ runs XDG autostart through systemd's generator rather than
+    /// gnome-session, so it meets all of them: systemd's generator mishandles quoted paths
+    /// when rewriting them into ExecStart=, does not unescape \$ and \` the way the spec
+    /// says, and GLib's own get_executable() hands back the first field with the quotes
+    /// still attached. None of that can bite a bare path, which is what every real install
+    /// has - so the quotes now appear only for the paths that genuinely need them, where the
+    /// escaping below (the spec requires ", `, $ and \ to be backslash-escaped inside a
+    /// quoted argument) still applies.
     /// </summary>
     private static string EscapeExecArgument(string path)
     {
+        if (path.IndexOfAny(ExecReservedChars) < 0) return path;
+
         var escaped = path
             .Replace("\\", "\\\\")
             .Replace("\"", "\\\"")

@@ -1393,7 +1393,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public void OpenProjectPage() => TryOpenBrowser(ProjectUrl);
 
     /// <summary>Where the Claude panel's install link sends people when Claude Code is not found.</summary>
-    public const string ClaudeDownloadUrl = "https://code.claude.com/docs/overview";
+    public const string ClaudeDownloadUrl = "https://code.claude.com/docs/en/overview";
 
     /// <summary>Opens the Claude Code install docs in the default browser.</summary>
     public void OpenClaudeDownloadPage() => TryOpenBrowser(ClaudeDownloadUrl);
@@ -2095,6 +2095,18 @@ public sealed class MainViewModel : INotifyPropertyChanged
             {
                 AutostartService.Set(true);
                 AppState.Update(a => a.AutostartInitialised = true);
+            }
+            else
+            {
+                // An entry can name a path that no longer launches anything - most of all on
+                // Linux, where an AppImage's autostart entry was for several releases written
+                // with the transient /tmp/.mount_* path the app happened to be running from,
+                // and where moving the .AppImage has the same effect. The user turned
+                // autostart on and it silently stopped working, with the menu agreeing it was
+                // off because the entry no longer points here. Rewriting it costs one file
+                // write on the launches where it is actually broken, and nothing at all
+                // otherwise.
+                AutostartService.RepairIfStale();
             }
 
             var enabled = AutostartService.IsEnabled();
