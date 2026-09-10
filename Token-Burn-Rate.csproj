@@ -19,7 +19,7 @@
 	<Version>$(InformationalVersion)</Version>
 
 	<AssemblyVersion>0.1.0</AssemblyVersion>
-    <InformationalVersion>0.1.0-alpha.13</InformationalVersion>
+    <InformationalVersion>0.1.0-alpha.14</InformationalVersion>
 	<!--
 	<InformationalVersion>$(AssemblyVersion</InformationalVersion>
 	-->
