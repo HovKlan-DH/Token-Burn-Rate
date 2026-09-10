@@ -37,12 +37,16 @@ public static class AutostartService
     ///
     /// On a Velopack install the running exe is the versioned copy inside the current
     /// "app-x.y.z" folder, which an update replaces; the stub one level up keeps its path
-    /// across updates, so that is what gets registered when it exists.
+    /// across updates, so that is what gets registered when it exists. The Linux build ships
+    /// as an AppImage instead, which never has that stub - see AppImagePath for its own,
+    /// differently-shaped stability problem.
     /// </summary>
     private static string? ExecutablePath
     {
         get
         {
+            if (OperatingSystem.IsLinux() && AppImagePath is { } appImage) return appImage;
+
             var path = Environment.ProcessPath;
             if (string.IsNullOrWhiteSpace(path)) return null;
 
@@ -50,6 +54,29 @@ public static class AutostartService
             if (name.Equals("dotnet", StringComparison.OrdinalIgnoreCase)) return null;
 
             return VelopackStub(path) ?? path;
+        }
+    }
+
+    /// <summary>
+    /// The AppImage file itself, when running as one - null otherwise (a Linux dev build run
+    /// with `dotnet run`, or any non-Linux OS).
+    ///
+    /// An AppImage runs by mounting itself via FUSE and exec'ing the binary from inside that
+    /// mount, so Environment.ProcessPath resolves to something like
+    /// "/tmp/.mount_AbCdEf/usr/bin/Token-Burn-Rate" - a path that is unique to this one
+    /// running process and stops existing the moment it exits, let alone across a reboot. An
+    /// autostart entry written with that path silently launches nothing at the next login: the
+    /// exec target is already gone by the time the session reads the .desktop file. AppImage's
+    /// own runtime sets $APPIMAGE in every process it launches to the real, stable path of the
+    /// .AppImage file the user downloaded - the same value Velopack's own Linux locator uses
+    /// for this exact reason - so that, not the mount path, is what autostart must register.
+    /// </summary>
+    private static string? AppImagePath
+    {
+        get
+        {
+            var path = Environment.GetEnvironmentVariable("APPIMAGE");
+            return string.IsNullOrWhiteSpace(path) ? null : path;
         }
     }
 

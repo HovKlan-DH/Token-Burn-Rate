@@ -4,17 +4,17 @@ namespace TokenBurnRate.Services;
 
 /// <summary>
 /// Business-day arithmetic for pacing credit spend. A business day is one of the first
-/// <paramref name="workDaysPerWeek"/> days of the week counting from Monday - so 5 (the
-/// default) means Monday-Friday, 6 extends into Saturday, and so on through 7. The count is
-/// user-configurable via the context menu's "Workdays in a week" and persisted as
-/// AppState.WorkDaysPerWeek.
+/// <paramref name="workDaysPerWeek"/> days of the week counting from Monday - so 5 means
+/// Monday-Friday, 6 extends into Saturday, and 7 (the default) covers every day of the
+/// week. The count is user-configurable via the context menu's "Workdays in a week" and
+/// persisted as AppState.WorkDaysPerWeek.
 ///
 /// Public holidays are not modelled: they vary by country and company, and treating one as
 /// a working day only makes the daily budget slightly conservative.
 /// </summary>
 public static class BusinessDays
 {
-    public const int DefaultWorkDaysPerWeek = 5;
+    public const int DefaultWorkDaysPerWeek = 7;
     public const int MinWorkDaysPerWeek = 1;
     public const int MaxWorkDaysPerWeek = 7;
 
