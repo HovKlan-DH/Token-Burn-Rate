@@ -7,6 +7,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
 using TokenBurnRate.ViewModels;
@@ -115,6 +116,9 @@ public partial class MainWindow : Window
         if (this.FindControl<MenuItem>("OpenFolderItem") is { } openFolder)
             openFolder.Click += (_, _) => _vm.OpenApplicationFolder();
 
+        if (this.FindControl<MenuItem>("OpenConfigFolderItem") is { } openConfigFolder)
+            openConfigFolder.Click += (_, _) => _vm.OpenConfigurationFolder();
+
         if (this.FindControl<MenuItem>("ProjectPageItem") is { } projectPage)
             projectPage.Click += (_, _) => _vm.OpenProjectPage();
 
@@ -145,7 +149,17 @@ public partial class MainWindow : Window
         _vm.PropertyChanged += _fontScaleHandler;
 
         if (this.FindControl<Button>("SignInButton") is { } signIn)
-            signIn.Click += (_, _) => RunSafely(() => _vm.SignInToGitHubAsync(_cts.Token), "sign-in button");
+            signIn.Click += (_, _) =>
+            {
+                // Once a code is already on screen, sign-in itself is a no-op re-entry
+                // guard (see MainViewModel.SignInToGitHubAsync), so a click at that point
+                // is really "let me copy the code again" - clipboard it every time rather
+                // than only on the click that first showed it.
+                if (!string.IsNullOrEmpty(_vm.SignInCode))
+                    CopyToClipboard(_vm.SignInCode);
+
+                RunSafely(() => _vm.SignInToGitHubAsync(_cts.Token), "sign-in button");
+            };
 
         if (this.FindControl<Button>("ClaudeDownloadButton") is { } claudeDownload)
             claudeDownload.Click += (_, _) => _vm.OpenClaudeDownloadPage();
@@ -735,6 +749,18 @@ public partial class MainWindow : Window
             Services.CrashLog.Record(ex, context);
         }
     }
+
+    /// <summary>Puts the GitHub device-flow code on the clipboard, so it can be pasted
+    /// straight into the browser tab the sign-in flow opened.</summary>
+    private void CopyToClipboard(string text) => RunSafely(async () =>
+    {
+        var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
+        if (clipboard is null) return;
+
+        var transfer = new DataTransfer();
+        transfer.Add(DataTransferItem.CreateText(text));
+        await clipboard.SetDataAsync(transfer);
+    }, "copy sign-in code");
 
     /// <summary>Closes for real, bypassing the minimise-to-tray interception.</summary>
     private void ExitApplication()

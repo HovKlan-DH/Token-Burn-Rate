@@ -176,6 +176,23 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private DateTimeOffset _nextRefresh = DateTimeOffset.UtcNow;
 
     /// <summary>
+    /// When this view model was constructed, i.e. app launch. Used only to recognise the
+    /// boot-time window in which a "session expired" reading is more likely Claude Code's
+    /// own background token refresh not having run yet than a real sign-out - see
+    /// <see cref="IsClaudeSessionRaceWindow"/>.
+    /// </summary>
+    private readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
+
+    /// <summary>
+    /// How long after launch a "session expired" failure is still assumed to be the boot
+    /// race rather than a genuine sign-out. Claude Code refreshes its token roughly every
+    /// eight hours, so a token that is still expired this long after launch was not merely
+    /// caught mid-refresh - retrying faster would not help, so the failure reverts to
+    /// non-transient once this window passes.
+    /// </summary>
+    private static readonly TimeSpan ClaudeSessionRaceWindow = TimeSpan.FromMinutes(2);
+
+    /// <summary>
     /// Set once every active Claude limit is spent, to the earliest of their reset times -
     /// there is nothing left to poll for until then, and the endpoint behind this call is
     /// undocumented and rate-limits hard (see CLAUDE.md), so a maxed-out account should not
@@ -200,15 +217,24 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     /// <summary>
     /// Set when the poll that just finished failed to reach Claude for a reason a few more
-    /// seconds could fix - see <see cref="ClaudeLimitsStatus.IsTransientFailure"/> - as
-    /// opposed to "not signed in" or "session expired", which polling again sooner cannot
-    /// help. Folded into <see cref="NothingToShow"/> so a boot-time race that only knocks
-    /// out Claude (Copilot's endpoint came up first, say) still gets the fast retry: the
-    /// old all-or-nothing check stood the back-off down the moment any one service had
-    /// data, which is exactly the case that left the Claude panel missing until the next
+    /// seconds could fix - see <see cref="ClaudeLimitsStatus.IsTransientFailure"/>, plus
+    /// "session expired" specifically while still inside <see cref="IsClaudeSessionRaceWindow"/>
+    /// - as opposed to "not signed in", or a "session expired" reading that has outlasted
+    /// that window, which polling again sooner cannot help. Folded into
+    /// <see cref="NothingToShow"/> so a boot-time race that only knocks out Claude
+    /// (Copilot's endpoint came up first, say) still gets the fast retry: the old
+    /// all-or-nothing check stood the back-off down the moment any one service had data,
+    /// which is exactly the case that left the Claude panel missing until the next
     /// full-interval poll or a manual restart.
     /// </summary>
     private bool _claudeTransientFailure;
+
+    /// <summary>
+    /// Whether "session expired" right now is still plausibly Claude Code's own background
+    /// token refresh not having caught up yet, rather than a real sign-out - see
+    /// <see cref="ClaudeSessionRaceWindow"/>.
+    /// </summary>
+    private bool IsClaudeSessionRaceWindow => DateTimeOffset.UtcNow - _startedAt < ClaudeSessionRaceWindow;
 
     /// <summary>How long the current back-off is, or null when the last poll found data.</summary>
     private TimeSpan? _retryDelay;
@@ -276,6 +302,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private const string DefaultClaudeAccent = "#D97757";
     private const string DefaultCopilotAccent = "#58A6FF";
     private const string DefaultPacingAccent = "#3FB950";
+
+    /// <summary>Red, matching BarViewModel's own OverColour so the header dot reads as the
+    /// same "trouble" colour as an over-budget bar rather than an unrelated shade.</summary>
+    private const string StatusDotRed = "#F85149";
 
     private string _claudeAccentColor = DefaultClaudeAccent;
     private string _copilotAccentColor = DefaultCopilotAccent;
@@ -594,12 +624,15 @@ public sealed class MainViewModel : INotifyPropertyChanged
             // ClaudeVisible/CopilotVisible/PacingVisible all gate on this too (see their
             // own comment), so their bindings need telling the instant it changes - nothing
             // else would otherwise touch those properties at the one moment the placeholder
-            // hands off to whichever panel just got its first data.
+            // hands off to whichever panel just got its first data. The status dot gates on
+            // it as well (see AnyAccountConnected), and StopLoading can clear this from the
+            // first *Available setter to answer, before RefreshAsync's own announcement.
             if (Set(ref _isLoading, value))
             {
                 OnPropertyChanged(nameof(ClaudeVisible));
                 OnPropertyChanged(nameof(CopilotVisible));
                 OnPropertyChanged(nameof(PacingVisible));
+                StatusDotChanged();
             }
         }
     }
@@ -622,6 +655,48 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// not depend on this at all - see its own doc comment.
     /// </summary>
     private bool NothingToShow => (!_claudeFound && !_copilotFound && !_pacingFound) || _claudeTransientFailure;
+
+    /// <summary>
+    /// True while at least one service has real data - the header dot's colour (see
+    /// <see cref="StatusDotColor"/>). Built on the same <see cref="_claudeFound"/>/
+    /// <see cref="_copilotFound"/>/<see cref="_pacingFound"/> flags as
+    /// <see cref="NothingToShow"/> rather than a panel's IsVisible, for the same reason:
+    /// those default true before the first poll so the panels can show placeholder dashes,
+    /// so a dot built on them would claim a connection the app has not actually made yet.
+    ///
+    /// <see cref="IsLoading"/> is folded in because those three flags default false, which
+    /// is indistinguishable from "every poll failed": without it the dot would sit red from
+    /// window creation until the first poll lands, accusing both services of failing before
+    /// either had been asked. Treating the pre-poll gap as connected keeps the dot quiet
+    /// until there is a real result to report.
+    ///
+    /// Unlike NothingToShow this ignores _claudeTransientFailure - that flag is about retry
+    /// pacing, not about whether an account is connected, and a transient Claude hiccup
+    /// should not turn the dot red while Copilot is still reporting fine.
+    /// </summary>
+    public bool AnyAccountConnected => _isLoading || _claudeFound || _copilotFound || _pacingFound;
+
+    /// <summary>
+    /// The header dot's colour: green while any account has data, red once a completed poll
+    /// has found none anywhere.
+    /// </summary>
+    public string StatusDotColor => AnyAccountConnected ? DefaultPacingAccent : StatusDotRed;
+
+    public string StatusDotTip => AnyAccountConnected
+        ? "At least one account is connected"
+        : "No account connected - Claude and Copilot both failed to report usage";
+
+    /// <summary>
+    /// Announces all three status-dot properties at once. They are three views of the same
+    /// inputs, so every caller that changes one changes all of them - routed through here so
+    /// a later edit cannot update one and leave the others stale.
+    /// </summary>
+    private void StatusDotChanged()
+    {
+        OnPropertyChanged(nameof(AnyAccountConnected));
+        OnPropertyChanged(nameof(StatusDotColor));
+        OnPropertyChanged(nameof(StatusDotTip));
+    }
 
     // Hiding is the user's own choice, made from the right-click menu.
     public bool ClaudeHidden
@@ -966,14 +1041,31 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _ => nameof(IsWorkDays7),
     };
 
-    /// <summary>Backs the "Workdays in a week" radio items 1-7 in the context menu.</summary>
-    public bool IsWorkDays1 { get => _workDaysPerWeek == 1; set { if (value) WorkDaysPerWeek = 1; } }
-    public bool IsWorkDays2 { get => _workDaysPerWeek == 2; set { if (value) WorkDaysPerWeek = 2; } }
-    public bool IsWorkDays3 { get => _workDaysPerWeek == 3; set { if (value) WorkDaysPerWeek = 3; } }
-    public bool IsWorkDays4 { get => _workDaysPerWeek == 4; set { if (value) WorkDaysPerWeek = 4; } }
-    public bool IsWorkDays5 { get => _workDaysPerWeek == 5; set { if (value) WorkDaysPerWeek = 5; } }
-    public bool IsWorkDays6 { get => _workDaysPerWeek == 6; set { if (value) WorkDaysPerWeek = 6; } }
-    public bool IsWorkDays7 { get => _workDaysPerWeek == 7; set { if (value) WorkDaysPerWeek = 7; } }
+    /// <summary>
+    /// Backs the "Workdays in a week" items 1-7 in the context menu. They are CheckBox
+    /// items, so clicking the one already ticked pushes false rather than being swallowed
+    /// the way a radio group would: <see cref="SelectWorkDays"/> is what puts the tick back.
+    /// </summary>
+    public bool IsWorkDays1 { get => _workDaysPerWeek == 1; set => SelectWorkDays(1, value); }
+    public bool IsWorkDays2 { get => _workDaysPerWeek == 2; set => SelectWorkDays(2, value); }
+    public bool IsWorkDays3 { get => _workDaysPerWeek == 3; set => SelectWorkDays(3, value); }
+    public bool IsWorkDays4 { get => _workDaysPerWeek == 4; set => SelectWorkDays(4, value); }
+    public bool IsWorkDays5 { get => _workDaysPerWeek == 5; set => SelectWorkDays(5, value); }
+    public bool IsWorkDays6 { get => _workDaysPerWeek == 6; set => SelectWorkDays(6, value); }
+    public bool IsWorkDays7 { get => _workDaysPerWeek == 7; set => SelectWorkDays(7, value); }
+
+    /// <summary>
+    /// Applies a click on one of the workday items. Ticking one selects it; unticking the
+    /// one already selected is not a real choice - there is no "no workdays" state - so the
+    /// value is left alone and the property re-announced, which snaps the checkmark the menu
+    /// just cleared back on. Without that echo the binding keeps its own false and the
+    /// submenu sits with nothing ticked while pacing still uses the unchanged value.
+    /// </summary>
+    private void SelectWorkDays(int days, bool isChecked)
+    {
+        if (isChecked) WorkDaysPerWeek = days;
+        else OnPropertyChanged(WorkDaysCheckedProperty(days));
+    }
 
     /// <summary>
     /// Width of the label column, shared by every bar so they line up. It is measured from
@@ -1056,6 +1148,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
             // reach a setter at all - an exception thrown before either service got that
             // far - so the placeholder still cannot outlive the one poll it exists to cover.
             IsLoading = false;
+
+            // _claudeFound/_copilotFound/_pacingFound all just settled above, so this is
+            // the one place a poll can change what the dot should show.
+            StatusDotChanged();
 
             ScheduleRetryIfNothingFound();
         }
@@ -1156,7 +1252,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
             ClaudeAvailable = limits.IsAvailable;
             _claudeFound = limits.IsAvailable;
-            _claudeTransientFailure = !limits.IsAvailable && limits.IsTransientFailure;
+            _claudeTransientFailure = !limits.IsAvailable &&
+                (limits.IsTransientFailure || (limits.IsExpiredSession && IsClaudeSessionRaceWindow));
             ClaudeSubtitle = limits.IsAvailable ? (_claudePlan ?? "") : (limits.Error ?? "");
         }
         else
@@ -1398,6 +1495,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// <summary>Opens the Claude Code install docs in the default browser.</summary>
     public void OpenClaudeDownloadPage() => TryOpenBrowser(ClaudeDownloadUrl);
 
+    /// <summary>Opens the folder holding the running executable, in the OS file browser.</summary>
+    public void OpenApplicationFolder() => OpenFolder(ApplicationFolder);
+
     /// <summary>
     /// Opens the folder AppState.Path writes the state file into, in the OS file browser -
     /// the same folder CrashLog drops its logs beside. That is the executable's own folder
@@ -1405,9 +1505,29 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// versioned, unwritable app-x.y.z directory) it is %LOCALAPPDATA%/~/.local/share instead - so
     /// this must follow AppState's resolution rather than assuming beside-the-exe.
     /// </summary>
-    public void OpenApplicationFolder()
+    public void OpenConfigurationFolder() => OpenFolder(ConfigurationFolder);
+
+    /// <summary>The running executable's own folder.</summary>
+    private static string? ApplicationFolder =>
+        System.IO.Path.GetDirectoryName(Environment.ProcessPath);
+
+    /// <summary>The folder AppState.Path writes the state file into - see OpenConfigurationFolder.</summary>
+    private static string? ConfigurationFolder =>
+        System.IO.Path.GetDirectoryName(Services.AppState.Path);
+
+    /// <summary>
+    /// Whether the configuration folder needs its own menu entry - false whenever it is the
+    /// same folder as the application's (a portable copy), which is the common case outside
+    /// of a Velopack install.
+    /// </summary>
+    public bool ConfigurationFolderDiffers =>
+        !string.Equals(
+            System.IO.Path.TrimEndingDirectorySeparator(ApplicationFolder ?? string.Empty),
+            System.IO.Path.TrimEndingDirectorySeparator(ConfigurationFolder ?? string.Empty),
+            StringComparison.Ordinal);
+
+    private static void OpenFolder(string? dir)
     {
-        var dir = System.IO.Path.GetDirectoryName(Services.AppState.Path);
         if (string.IsNullOrWhiteSpace(dir)) return;
 
         try

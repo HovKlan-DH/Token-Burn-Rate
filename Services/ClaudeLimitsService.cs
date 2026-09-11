@@ -57,7 +57,7 @@ public sealed class ClaudeLimitsService
             if (cred is null)
                 return ClaudeLimitsStatus.Unavailable("not signed in to Claude Code");
             if (cred.Value.Expired)
-                return ClaudeLimitsStatus.Unavailable("session expired - run claude to refresh");
+                return ClaudeLimitsStatus.Unavailable("session expired - run claude to refresh", expiredSession: true);
 
             token = cred.Value.AccessToken;
             plan = cred.Value.SubscriptionType;
@@ -78,7 +78,7 @@ public sealed class ClaudeLimitsService
 
             using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
             if (resp.StatusCode == System.Net.HttpStatusCode.Unauthorized)
-                return ClaudeLimitsStatus.Unavailable("session expired - run claude to refresh");
+                return ClaudeLimitsStatus.Unavailable("session expired - run claude to refresh", expiredSession: true);
             if (!resp.IsSuccessStatusCode)
                 return ClaudeLimitsStatus.Unavailable($"usage API returned {(int)resp.StatusCode}", transient: true);
 

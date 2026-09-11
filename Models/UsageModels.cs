@@ -89,14 +89,26 @@ public sealed class ClaudeLimitsStatus
     /// Whether this failure is worth fast-retrying: a network hiccup, an unreadable
     /// credentials file, or an unexpected HTTP status can all clear themselves within
     /// seconds, which is exactly the boot-time race where the network stack is not up yet
-    /// when the first poll runs. "not signed in" and "session expired" cannot be fixed by
-    /// polling again sooner - only a `claude` login does that - so they are excluded the
-    /// same way Copilot's NeedsSignIn is excluded from its own retry accounting.
+    /// when the first poll runs. "not signed in" cannot be fixed by polling again sooner -
+    /// only a `claude` login does that - so it is excluded the same way Copilot's
+    /// NeedsSignIn is excluded from its own retry accounting. "session expired" is its own
+    /// flag below rather than being folded in here or excluded outright.
     /// </summary>
     public bool IsTransientFailure { get; init; }
 
-    public static ClaudeLimitsStatus Unavailable(string error, bool transient = false) =>
-        new() { Error = error, IsTransientFailure = transient };
+    /// <summary>
+    /// Whether this failure specifically is a token past its <c>expiresAt</c>. Ordinarily
+    /// that means a real sign-out that no amount of retrying fixes - except right after the
+    /// app starts, where Claude Code's own background refresh (roughly every eight hours)
+    /// may simply not have run yet, leaving a technically-expired token on disk for a few
+    /// seconds. The view model is the one that knows how long ago the app started, so it
+    /// decides whether this is worth a fast retry; this flag just tells it which failure it
+    /// is looking at.
+    /// </summary>
+    public bool IsExpiredSession { get; init; }
+
+    public static ClaudeLimitsStatus Unavailable(string error, bool transient = false, bool expiredSession = false) =>
+        new() { Error = error, IsTransientFailure = transient, IsExpiredSession = expiredSession };
 }
 
 /// <summary>

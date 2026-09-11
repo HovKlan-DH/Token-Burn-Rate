@@ -121,9 +121,9 @@
                   IsChecked="{Binding !PacingHidden, Mode=TwoWay}"/>
         <Separator/>
         <MenuItem Header="Panel colors">
-          <MenuItem Name="ClaudeColorItem" Header="Claude…"/>
-          <MenuItem Name="CopilotColorItem" Header="GitHub Copilot…"/>
-          <MenuItem Name="PacingColorItem" Header="GitHub Copilot : My Pace…"/>
+          <MenuItem Name="ClaudeColorItem" Header="Claude"/>
+          <MenuItem Name="CopilotColorItem" Header="GitHub Copilot"/>
+          <MenuItem Name="PacingColorItem" Header="GitHub Copilot : My Pace"/>
         </MenuItem>
         <MenuItem Header="Text size">
           <MenuItem Name="BiggerTextItem" Header="Make bigger"
@@ -134,36 +134,46 @@
         </MenuItem>
         <MenuItem Header="Workdays in a week"
                   ToolTip.Tip="How many days count as a workday for GitHub Copilot : My Pace - the first N days starting Monday">
-          <MenuItem Header="1" ToggleType="Radio" GroupName="WorkDaysPerWeek"
+          <!-- CheckBox rather than Radio: mutual exclusivity is already handled by
+               WorkDaysPerWeek's setter (it flips every other IsWorkDaysN to false), and
+               CheckBox is what draws the same checkmark glyph the rest of the menu uses -
+               Radio would draw a dot instead. -->
+          <MenuItem Header="1" ToggleType="CheckBox"
                     IsChecked="{Binding IsWorkDays1, Mode=TwoWay}"/>
-          <MenuItem Header="2" ToggleType="Radio" GroupName="WorkDaysPerWeek"
+          <MenuItem Header="2" ToggleType="CheckBox"
                     IsChecked="{Binding IsWorkDays2, Mode=TwoWay}"/>
-          <MenuItem Header="3" ToggleType="Radio" GroupName="WorkDaysPerWeek"
+          <MenuItem Header="3" ToggleType="CheckBox"
                     IsChecked="{Binding IsWorkDays3, Mode=TwoWay}"/>
-          <MenuItem Header="4" ToggleType="Radio" GroupName="WorkDaysPerWeek"
+          <MenuItem Header="4" ToggleType="CheckBox"
                     IsChecked="{Binding IsWorkDays4, Mode=TwoWay}"/>
-          <MenuItem Header="5" ToggleType="Radio" GroupName="WorkDaysPerWeek"
+          <MenuItem Header="5" ToggleType="CheckBox"
                     IsChecked="{Binding IsWorkDays5, Mode=TwoWay}"/>
-          <MenuItem Header="6" ToggleType="Radio" GroupName="WorkDaysPerWeek"
+          <MenuItem Header="6" ToggleType="CheckBox"
                     IsChecked="{Binding IsWorkDays6, Mode=TwoWay}"/>
-          <MenuItem Header="7" ToggleType="Radio" GroupName="WorkDaysPerWeek"
+          <MenuItem Header="7" ToggleType="CheckBox"
                     IsChecked="{Binding IsWorkDays7, Mode=TwoWay}"/>
         </MenuItem>
         <Separator/>
-        <MenuItem Header="Start with the computer" ToggleType="CheckBox"
-                  IsChecked="{Binding AutostartEnabled, Mode=TwoWay}"
-                  IsEnabled="{Binding AutostartSupported}"
-                  ToolTip.Tip="Launch automatically when you log in"/>
-        <!-- Hidden outright where no tray exists, rather than offering a choice that would
-             leave the close button unable to do anything. -->
-        <MenuItem Header="Close button minimises to tray" ToggleType="CheckBox"
-                  IsVisible="{Binding TraySupported}"
-                  IsChecked="{Binding CloseToTray, Mode=TwoWay}"
-                  ToolTip.Tip="Keep running in the notification area instead of exiting"/>
-        <Separator/>
-        <MenuItem Name="OpenFolderItem" Header="Open application folder"
-                  ToolTip.Tip="Open the folder holding the executable and the state file"/>
-        <MenuItem Header="About">
+        <MenuItem Header="Advanced">
+          <MenuItem Header="Start with the computer" ToggleType="CheckBox"
+                    IsChecked="{Binding AutostartEnabled, Mode=TwoWay}"
+                    IsEnabled="{Binding AutostartSupported}"
+                    ToolTip.Tip="Launch automatically when you log in"/>
+          <!-- Hidden outright where no tray exists, rather than offering a choice that would
+               leave the close button unable to do anything. -->
+          <MenuItem Header="Close button minimises to tray" ToggleType="CheckBox"
+                    IsVisible="{Binding TraySupported}"
+                    IsChecked="{Binding CloseToTray, Mode=TwoWay}"
+                    ToolTip.Tip="Keep running in the notification area instead of exiting"/>
+          <Separator/>
+          <MenuItem Name="OpenFolderItem" Header="Open application folder"
+                    ToolTip.Tip="Open the folder holding the executable"/>
+          <!-- Only shown when it differs from the application folder - a Velopack install
+               keeps the state file in %LOCALAPPDATA%/~/.local/share instead, since the exe's
+               own folder is a versioned, unwritable app-x.y.z directory. -->
+          <MenuItem Name="OpenConfigFolderItem" Header="Open configuration folder"
+                    IsVisible="{Binding ConfigurationFolderDiffers}"
+                    ToolTip.Tip="Open the folder holding the state file"/>
           <MenuItem Name="ProjectPageItem" Header="Project page on GitHub"
                     ToolTip.Tip="https://github.com/HovKlan-DH/Token-Burn-Rate"/>
           <Separator/>
@@ -191,8 +201,9 @@
           <!-- Left edge matches the section chevrons below. The dot is narrower than a
                chevron glyph, so it carries extra right margin to put the text that follows
                on the same x as the headers. -->
-          <Ellipse Width="7" Height="7" Fill="#3FB950" VerticalAlignment="Center"
-                   Margin="0,1,3,0"/>
+          <Ellipse Width="7" Height="7" Fill="{Binding StatusDotColor, Converter={StaticResource Brush}}"
+                   VerticalAlignment="Center" Margin="0,1,3,0"
+                   ToolTip.Tip="{Binding StatusDotTip}"/>
           <!-- The countdown stands in for the app name. Both services refresh on one timer,
                so there is a single figure; the time and the icon form one button, so either
                can be clicked to refresh. -->
@@ -300,14 +311,15 @@
                 HorizontalContentAlignment="Center"
                 Padding="0,5" FontSize="10"
                 Background="#1F6FEB" Foreground="White"
-                BorderThickness="0" CornerRadius="4" Cursor="Hand">
+                BorderThickness="0" CornerRadius="4" Cursor="Hand"
+                ToolTip.Tip="Click to copy the code">
           <TextBlock TextAlignment="Center">
             <!-- Mode=OneWay is required on both Runs: Run.Text defaults to TwoWay in
                  Avalonia, and TwoWay plus StringFormat is a known infinite-loop trap
                  (writes the formatted string back to the source, which reformats it,
                  forever) - see https://github.com/AvaloniaUI/Avalonia/issues/18737. -->
             <Run Text="{Binding SignInText, Mode=OneWay}" FontWeight="Normal"/>
-            <Run Text="{Binding SignInCode, Mode=OneWay, StringFormat=' {0}'}" FontWeight="Bold" Foreground="#FFD866"/>
+            <Run Text="{Binding SignInCode, Mode=OneWay, StringFormat=' {0}'}" FontWeight="Bold" Foreground="White"/>
           </TextBlock>
         </Button>
       </StackPanel>

@@ -1,5 +1,22 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+
+	<AssemblyName>Token-Burn-Rate</AssemblyName>
+	<RootNamespace>TokenBurnRate</RootNamespace>
+	<Title>Token Burn Rate</Title>
+	<Product>Token Burn Rate</Product>
+	<Description>Live Claude Code and GitHub Copilot usage.</Description>
+	<Copyright>©2026 Dennis Helligsø</Copyright>
+
+	<AssemblyVersion>1.0.0</AssemblyVersion>
+	<InformationalVersion>1.0.0-beta.1</InformationalVersion>
+
+	<!-- Must stay below the two properties they read: MSBuild evaluates a PropertyGroup
+	     top-to-bottom, so placing these first silently resolved FileVersion to empty and
+	     Version to a bare 1.0.0 (the SDK's fallback), dropping the pre-release suffix. -->
+	<FileVersion>$(AssemblyVersion)</FileVersion>
+	<Version>$(InformationalVersion)</Version>
+	  
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
@@ -8,21 +25,12 @@
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <InvariantGlobalization>true</InvariantGlobalization>
     <ApplicationIcon>Assets\icon.ico</ApplicationIcon>
-    <RootNamespace>TokenBurnRate</RootNamespace>
 
-    <AssemblyName>Token-Burn-Rate</AssemblyName>
-    <Title>Token Burn Rate</Title>
-    <Product>Token Burn Rate</Product>
-    <Description>Live Claude Code and GitHub Copilot usage.</Description>
-    <Copyright>©2026 Dennis Helligsø</Copyright>
-	<FileVersion>$(AssemblyVersion)</FileVersion>
-	<Version>$(InformationalVersion)</Version>
-
-	<AssemblyVersion>0.5.0</AssemblyVersion>
-    <InformationalVersion>0.5.0-alpha.1</InformationalVersion>
-	<!--
-	<InformationalVersion>$(AssemblyVersion</InformationalVersion>
-	-->
+	<IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+	<!-- Otherwise the SDK appends "+<git-sha>" to InformationalVersion (and so to
+	    Explorer's Properties > Details > Product version), which VersionText in
+	    MainViewModel already strips back off for the in-app display - keep the raw
+	    assembly attribute clean too instead of relying on that trim everywhere. -->
 
   </PropertyGroup>
 
