@@ -272,11 +272,14 @@
 
         <!-- Shown only when Claude Code is not usable from this machine - not installed,
              not signed in, or a session that expired - so the panel still explains itself
-             instead of just vanishing. -->
+             instead of just vanishing. The wording and the download button both depend on
+             which of those it is: an expired session is not an install problem, and saying
+             so would contradict the Claude Code the user can see is installed. -->
         <StackPanel Spacing="6" IsVisible="{Binding ClaudeInstallHintVisible}">
-          <TextBlock Text="Claude Code isn't available on this machine. Install it to see usage here, or right-click this window to hide the Claude panel."
+          <TextBlock Text="{Binding ClaudeExplainerText}"
                      Classes="subtitle" TextWrapping="Wrap" FontSize="11"/>
           <Button Name="ClaudeDownloadButton"
+                  IsVisible="{Binding ClaudeDownloadVisible}"
                   HorizontalAlignment="Stretch"
                   HorizontalContentAlignment="Center"
                   Padding="0,5" FontSize="10"

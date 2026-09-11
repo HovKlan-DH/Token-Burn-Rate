@@ -236,6 +236,20 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// </summary>
     private bool IsClaudeSessionRaceWindow => DateTimeOffset.UtcNow - _startedAt < ClaudeSessionRaceWindow;
 
+    /// <summary>
+    /// Whether the last poll failed because Claude Code is signed out or its token expired,
+    /// as opposed to not being on this machine at all. Drives which explainer the panel
+    /// shows in place of its bars - see <see cref="ClaudeExplainerText"/>.
+    /// </summary>
+    private bool _claudeSignedOut;
+
+    /// <summary>
+    /// Whether any poll this run has returned real limits. Gates keeping stale bars up
+    /// through an expired session: with nothing ever polled there is nothing to keep, and
+    /// the panel has to fall back to the explainer.
+    /// </summary>
+    private bool _claudeHasPolled;
+
     /// <summary>How long the current back-off is, or null when the last poll found data.</summary>
     private TimeSpan? _retryDelay;
 
@@ -516,6 +530,35 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// </summary>
     public bool ClaudeBarsVisible => ClaudeExpanded && !ClaudeNeedsInstall;
     public bool ClaudeInstallHintVisible => ClaudeExpanded && ClaudeNeedsInstall;
+
+    /// <summary>
+    /// What the panel says in place of its bars. An expired token proves Claude Code is
+    /// installed and was signed in on this machine, so telling that user to install it - the
+    /// only thing this panel used to say, whatever the reason - reads as the app failing to
+    /// see an install that is plainly there. It resolves itself once Claude Code refreshes
+    /// the token, so the text says to wait rather than to fix anything.
+    /// </summary>
+    public string ClaudeExplainerText => _claudeSignedOut
+        ? "The session for Claude Code has expired, but usage report will appear automatically here when you ask Claude the next time."
+        : "Claude Code isn't available on this machine. Install it to see usage here, or right-click this window to hide the Claude panel.";
+
+    /// <summary>
+    /// The download button only makes sense for a machine without Claude Code: offering
+    /// "Get Claude Code" to someone who already has it is the same wrong claim the text
+    /// used to make.
+    /// </summary>
+    public bool ClaudeDownloadVisible => !_claudeSignedOut;
+
+    /// <summary>
+    /// Announces the explainer's two halves together, for the same reason
+    /// <see cref="ClaudeBodyChanged"/> exists: both read <see cref="_claudeSignedOut"/>, so
+    /// a caller that raised one and not the other would leave a stale pairing on screen.
+    /// </summary>
+    private void ClaudeExplainerChanged()
+    {
+        OnPropertyChanged(nameof(ClaudeExplainerText));
+        OnPropertyChanged(nameof(ClaudeDownloadVisible));
+    }
 
     /// <summary>
     /// Announces both halves of the Claude panel's body at once. They are complements of
@@ -1250,10 +1293,26 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 _claudePlan = limits.Plan;
             }
 
-            ClaudeAvailable = limits.IsAvailable;
+            // An expired token is proof Claude Code is installed and was signed in here at
+            // some point - the credentials file exists and parsed. That is a different
+            // problem from "not on this machine", and the explainer says so.
+            _claudeSignedOut = !limits.IsAvailable && limits.IsExpiredSession;
+            ClaudeExplainerChanged();
+
+            // Bars already on screen are worth more than an explainer standing where they
+            // were. An expired token says nothing about the figures last polled - they were
+            // true when read and Claude Code refreshes the token on its own - so a session
+            // that expires under an idle window keeps its bars and reports the staleness in
+            // the subtitle, instead of replacing a full panel with "install Claude Code".
+            // Only a failure with nothing behind it - no successful poll this run - gives
+            // the panel over to the explainer.
+            var keepStaleBars = !limits.IsAvailable && limits.IsExpiredSession && _claudeHasPolled;
+
+            ClaudeAvailable = limits.IsAvailable || keepStaleBars;
             _claudeFound = limits.IsAvailable;
             _claudeTransientFailure = !limits.IsAvailable &&
                 (limits.IsTransientFailure || (limits.IsExpiredSession && IsClaudeSessionRaceWindow));
+            if (limits.IsAvailable) _claudeHasPolled = true;
             ClaudeSubtitle = limits.IsAvailable ? (_claudePlan ?? "") : (limits.Error ?? "");
         }
         else
