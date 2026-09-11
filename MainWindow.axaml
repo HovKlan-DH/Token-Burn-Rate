@@ -58,6 +58,15 @@
     <Style Selector="Button#RefreshButton:pointerover /template/ ContentPresenter">
       <Setter Property="Background" Value="#26282D"/>
     </Style>
+    <!-- Fluent's MenuItem template dims the header text on :disabled but leaves the
+         checkmark glyph (PART_ToggleIconPresenter, a ContentControl holding a Path whose
+         Fill is bound straight to MenuItem.Foreground) at full opacity, so a
+         disabled-but-checked item like the ALPHA/BETA toggles under an unchecked
+         "Auto-update" still shows a solid black tick. Dimming it to match keeps the whole
+         row reading as disabled. -->
+    <Style Selector="MenuItem:disabled /template/ ContentControl#PART_ToggleIconPresenter">
+      <Setter Property="Opacity" Value="0.4"/>
+    </Style>
     <Style Selector="TextBlock.countdown">
       <Setter Property="FontSize" Value="10"/>
       <Setter Property="Foreground" Value="#6B7079"/>
@@ -121,9 +130,12 @@
                   IsChecked="{Binding !PacingHidden, Mode=TwoWay}"/>
         <Separator/>
         <MenuItem Header="Panel colors">
-          <MenuItem Name="ClaudeColorItem" Header="Claude"/>
-          <MenuItem Name="CopilotColorItem" Header="GitHub Copilot"/>
-          <MenuItem Name="PacingColorItem" Header="GitHub Copilot : My Pace"/>
+          <MenuItem Name="ClaudeColorItem" Header="Claude"
+                    IsEnabled="{Binding ClaudeVisible}"/>
+          <MenuItem Name="CopilotColorItem" Header="GitHub Copilot"
+                    IsEnabled="{Binding CopilotVisible}"/>
+          <MenuItem Name="PacingColorItem" Header="GitHub Copilot : My Pace"
+                    IsEnabled="{Binding PacingVisible}"/>
         </MenuItem>
         <MenuItem Header="Text size">
           <MenuItem Name="BiggerTextItem" Header="Make bigger"
@@ -166,6 +178,18 @@
                     IsChecked="{Binding CloseToTray, Mode=TwoWay}"
                     ToolTip.Tip="Keep running in the notification area instead of exiting"/>
           <Separator/>
+          <MenuItem Header="Auto-update to newest version" ToggleType="CheckBox"
+                    IsChecked="{Binding AutoUpdate, Mode=TwoWay}"
+                    ToolTip.Tip="Check for and silently install updates on launch"/>
+          <MenuItem Header="Allow updates to newer ALPHA version" ToggleType="CheckBox"
+                    IsChecked="{Binding UpdateIncludeAlpha, Mode=TwoWay}"
+                    IsEnabled="{Binding AutoUpdate}"
+                    ToolTip.Tip="Also offer ALPHA builds when checking for updates"/>
+          <MenuItem Header="Allow updates to newer BETA version" ToggleType="CheckBox"
+                    IsChecked="{Binding UpdateIncludeBeta, Mode=TwoWay}"
+                    IsEnabled="{Binding AutoUpdate}"
+                    ToolTip.Tip="Also offer BETA builds when checking for updates"/>
+          <Separator/>
           <MenuItem Name="OpenFolderItem" Header="Open application folder"
                     ToolTip.Tip="Open the folder holding the executable"/>
           <!-- Only shown when it differs from the application folder - a Velopack install
@@ -174,6 +198,7 @@
           <MenuItem Name="OpenConfigFolderItem" Header="Open configuration folder"
                     IsVisible="{Binding ConfigurationFolderDiffers}"
                     ToolTip.Tip="Open the folder holding the state file"/>
+          <Separator/>
           <MenuItem Name="ProjectPageItem" Header="Project page on GitHub"
                     ToolTip.Tip="https://github.com/HovKlan-DH/Token-Burn-Rate"/>
           <Separator/>

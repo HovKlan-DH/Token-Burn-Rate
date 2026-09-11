@@ -9,7 +9,7 @@
 	<Copyright>©2026 Dennis Helligsø</Copyright>
 
 	<AssemblyVersion>1.0.0</AssemblyVersion>
-	<InformationalVersion>1.0.0-beta.1</InformationalVersion>
+	<InformationalVersion>1.0.0-beta.2</InformationalVersion>
 
 	<!-- Must stay below the two properties they read: MSBuild evaluates a PropertyGroup
 	     top-to-bottom, so placing these first silently resolved FileVersion to empty and
@@ -64,7 +64,7 @@
          need under Avalonia 11 is gone - forcing an older version here would fight that
          floor instead of matching it. -->
     <!-- No 12.x build exists yet; latest available is still on the 11.3 line. -->
-    <PackageReference Include="Avalonia.Diagnostics" Version="11.3.21">
+    <PackageReference Include="Avalonia.Diagnostics" Version="11.3.22">
       <IncludeAssets Condition="'$(Configuration)' != 'Debug'">None</IncludeAssets>
       <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
     </PackageReference>

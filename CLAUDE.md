@@ -49,13 +49,23 @@ GitHub Releases. Full rationale and the tradeoffs behind it:
 - `Services/UpdateService.cs` checks GitHub Releases on every launch and, if a newer
   version exists, downloads and applies it **silently**, then restarts — no dialog, no
   menu interaction. This was a deliberate choice over a "click to install" flow.
-- By default only real (bare `X.Y.Z`) versions are offered. `--update-include-beta` widens
-  that to also accept `-beta.N` builds; `--update-include-alpha` widens it further to also
-  accept `-alpha.N` (there is deliberately no `-rc` tier — CI's version scheme only ever
-  produces alpha, beta, or a bare release). Each flag includes everything at least as
-  stable as it names — alpha implies beta implies release. Since every release so far is an
-  alpha, a default launch currently has nothing to update to until the first bare X.Y.Z
-  ships — that's expected, not a bug.
+- The context menu's Advanced submenu has an "Auto-update to newest version" toggle,
+  checked by default, backed by `AppState.AutoUpdate`/`MainViewModel.AutoUpdate`. Unchecked,
+  `MainWindow`'s Opened handler skips calling `UpdateService.CheckOnLaunch` entirely — the
+  widget never checks GitHub Releases and never restarts itself. This is separate from
+  `Services/CheckInService.cs`'s mailscan.dk "ping home", which stays mandatory regardless
+  of this setting since it's telemetry, not an update check.
+- By default only real (bare `X.Y.Z`) versions are offered. The context menu's Advanced
+  submenu has two unchecked-by-default toggles, each an independent gate — "Allow updates
+  to newer BETA version" accepts `-beta.N` builds, "Allow updates to newer ALPHA version"
+  accepts `-alpha.N` builds (there is deliberately no `-rc` tier — CI's version scheme only
+  ever produces alpha, beta, or a bare release). Checking one does not check the other, but
+  since alpha is the less stable tier, checking ALPHA alone still widens the update ceiling
+  to admit alpha, beta, and release builds — see `UpdateService.MaxTierRequested`. Both
+  persist to the state file (`AppState.UpdateIncludeAlpha/Beta`) and are read by
+  `MainViewModel`, which passes them into `UpdateService.CheckOnLaunch`. Since every
+  release so far is an alpha, a default launch currently has nothing to update to until the
+  first bare X.Y.Z ships — that's expected, not a bug.
 - CI ([.github/workflows/build-and-release.yml](.github/workflows/build-and-release.yml))
   runs `dotnet publish` into an unpacked folder per RID, then `vpk pack` turns that into
   the single downloadable file users actually get (`Setup.exe` / `.AppImage` / `Setup.pkg`),

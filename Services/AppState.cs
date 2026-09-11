@@ -80,6 +80,33 @@ public sealed class AppState
     public bool? TrayNoticeShown { get; set; }
 
     /// <summary>
+    /// Whether the widget checks for and silently applies updates at all, set from the
+    /// context menu's "Auto-update to newest version". Absent means never set, and the
+    /// widget defaults to on - see UpdateService.CheckOnLaunch.
+    /// </summary>
+    [JsonPropertyName("autoUpdate")]
+    public bool? AutoUpdate { get; set; }
+
+    /// <summary>
+    /// Whether the update check will offer an alpha build as an update, set from the
+    /// context menu's "Allow updates to newer ALPHA version". Absent means never set, and
+    /// the widget defaults to off - see UpdateService.Tier. Independent of
+    /// <see cref="UpdateIncludeBeta"/> in the UI, though alpha being the least stable tier
+    /// still widens the update ceiling to admit beta and release builds too regardless of
+    /// that flag - see UpdateService.MaxTierRequested.
+    /// </summary>
+    [JsonPropertyName("updateIncludeAlpha")]
+    public bool? UpdateIncludeAlpha { get; set; }
+
+    /// <summary>
+    /// Whether the update check will offer a beta build as an update, set from the context
+    /// menu's "Allow updates to newer BETA version". Absent means never set, and the widget
+    /// defaults to off - only a real (bare X.Y.Z) release is offered by default.
+    /// </summary>
+    [JsonPropertyName("updateIncludeBeta")]
+    public bool? UpdateIncludeBeta { get; set; }
+
+    /// <summary>
     /// The whole widget's text/UI scale, set from "Make bigger"/"Make smaller" in the
     /// context menu. Absent means never set, and the widget defaults to 1.0 - its
     /// as-designed size.

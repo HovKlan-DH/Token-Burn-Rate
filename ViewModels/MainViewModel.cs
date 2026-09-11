@@ -301,6 +301,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private bool _pinned = true;
     private bool _closeToTray = true;
     private bool _traySupported;
+    private bool _autoUpdate = true;
+    private bool _updateIncludeAlpha;
+    private bool _updateIncludeBeta;
 
     /// <summary>Which bar the tray ring follows and what colour it draws in - see ResolveIconState.</summary>
     private string _iconSource = "max";
@@ -983,6 +986,54 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     /// <summary>False on a platform with no autostart mechanism, which greys the menu item.</summary>
     public bool AutostartSupported => AutostartService.IsSupported;
+
+    /// <summary>
+    /// Whether the widget checks for and silently applies updates at all (see
+    /// Services/UpdateService.cs). Defaults to on. This gates the update check only - the
+    /// mailscan.dk "ping home" (see CheckInService) is unrelated telemetry and always runs
+    /// regardless of this setting.
+    /// </summary>
+    public bool AutoUpdate
+    {
+        get => _autoUpdate;
+        set
+        {
+            if (!Set(ref _autoUpdate, value)) return;
+            AppState.Update(a => a.AutoUpdate = value);
+        }
+    }
+
+    /// <summary>
+    /// Whether the update check (see Services/UpdateService.cs) will offer an alpha build.
+    /// Defaults to off: only a real (bare X.Y.Z) release is offered until the user opts in.
+    /// Independent of <see cref="UpdateIncludeBeta"/> - each checkbox is its own gate, so
+    /// checking ALPHA alone offers alpha and release builds but not beta, and both can be
+    /// checked together to widen further. UpdateService.MaxTierRequested folds the two back
+    /// into a single tier ceiling.
+    /// </summary>
+    public bool UpdateIncludeAlpha
+    {
+        get => _updateIncludeAlpha;
+        set
+        {
+            if (!Set(ref _updateIncludeAlpha, value)) return;
+            AppState.Update(a => a.UpdateIncludeAlpha = value);
+        }
+    }
+
+    /// <summary>
+    /// Whether the update check will offer a beta build. Defaults to off. Independent of
+    /// <see cref="UpdateIncludeAlpha"/> - see that property for why.
+    /// </summary>
+    public bool UpdateIncludeBeta
+    {
+        get => _updateIncludeBeta;
+        set
+        {
+            if (!Set(ref _updateIncludeBeta, value)) return;
+            AppState.Update(a => a.UpdateIncludeBeta = value);
+        }
+    }
 
     // ---- font scale ----------------------------------------------------------------------
 
@@ -2209,6 +2260,18 @@ public sealed class MainViewModel : INotifyPropertyChanged
         // belongs. TraySupported still has the final say.
         _closeToTray = state.CloseToTray ?? true;
         OnPropertyChanged(nameof(CloseToTray));
+
+        // Absent means never set: auto-update stays on, matching the always-on behaviour
+        // before this was a UI toggle.
+        _autoUpdate = state.AutoUpdate ?? true;
+        OnPropertyChanged(nameof(AutoUpdate));
+
+        // Absent means never set: stay on real releases only, the same as before these were
+        // UI toggles instead of --update-include-alpha/--update-include-beta command-line flags.
+        _updateIncludeAlpha = state.UpdateIncludeAlpha ?? false;
+        _updateIncludeBeta = state.UpdateIncludeBeta ?? false;
+        OnPropertyChanged(nameof(UpdateIncludeAlpha));
+        OnPropertyChanged(nameof(UpdateIncludeBeta));
 
         if (state.Hidden is { } h)
         {

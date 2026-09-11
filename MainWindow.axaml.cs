@@ -216,8 +216,12 @@ public partial class MainWindow : Window
 
             _vm.TickCountdowns();
             RunRefresh("initial refresh");
+
+            // Mandatory regardless of AutoUpdate: this is telemetry, not an update check.
             Services.CheckInService.PingHome();
-            Services.UpdateService.CheckOnLaunch();
+
+            if (_vm.AutoUpdate)
+                Services.UpdateService.CheckOnLaunch(_vm.UpdateIncludeAlpha, _vm.UpdateIncludeBeta);
         };
     }
 

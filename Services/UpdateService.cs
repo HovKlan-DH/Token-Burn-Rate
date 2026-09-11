@@ -43,17 +43,18 @@ public static class UpdateService
     private enum Tier { Release, Beta, Alpha }
 
     /// <summary>
-    /// Opt-in flags widening what counts as an update, read from the given argv rather
-    /// than threaded in from <c>Main(string[] args)</c>, since <see cref="CheckOnLaunch"/>
-    /// is called parameterless from MainWindow's Opened handler. Without either, only real
-    /// (non-pre-release) versions are offered, so a user on a stable build stays on stable
-    /// builds. --update-include-alpha implies beta too: alpha is the least stable tier, so
-    /// wanting it means wanting anything at least as stable as well.
+    /// Opt-in switches widening what counts as an update, set from the context menu's
+    /// Advanced submenu (see MainViewModel.UpdateIncludeAlpha/UpdateIncludeBeta) and
+    /// persisted to AppState rather than passed on the command line. Without either, only
+    /// real (non-pre-release) versions are offered, so a user on a stable build stays on
+    /// stable builds. The two checkboxes are independent in the UI, but alpha is still the
+    /// least stable tier: requesting it here widens the ceiling to also admit beta and
+    /// release, whether or not the beta checkbox itself is on.
     /// </summary>
-    private static Tier MaxTierRequested(string[] args)
+    private static Tier MaxTierRequested(bool includeAlpha, bool includeBeta)
     {
-        if (args.Contains("--update-include-alpha", StringComparer.OrdinalIgnoreCase)) return Tier.Alpha;
-        if (args.Contains("--update-include-beta", StringComparer.OrdinalIgnoreCase)) return Tier.Beta;
+        if (includeAlpha) return Tier.Alpha;
+        if (includeBeta) return Tier.Beta;
         return Tier.Release;
     }
 
@@ -72,22 +73,21 @@ public static class UpdateService
     private static UpdateManager NewManager(string repoUrl) =>
         new(new GithubSource(repoUrl, accessToken: null, prerelease: true));
 
-    public static void CheckOnLaunch()
+    public static void CheckOnLaunch(bool includeAlpha, bool includeBeta)
     {
-        _ = CheckOnLaunchAsync();
+        _ = CheckOnLaunchAsync(includeAlpha, includeBeta);
     }
 
-    private static async Task CheckOnLaunchAsync()
+    private static async Task CheckOnLaunchAsync(bool includeAlpha, bool includeBeta)
     {
         try
         {
-            var args = Environment.GetCommandLineArgs();
-            var maxTier = MaxTierRequested(args);
+            var maxTier = MaxTierRequested(includeAlpha, includeBeta);
 
             // TEMPORARY diagnostics while chasing why Linux/AppImage never updates - remove
             // once that's root-caused. Writes unconditionally (not just on error) so a
             // silent early-return is visible too.
-            DiagLog($"start: maxTier={maxTier}, argv={string.Join(' ', args)}");
+            DiagLog($"start: maxTier={maxTier}");
 
             // Ask the source for the widest pool (every tier CI ever tags) and then filter
             // by parsed version label ourselves - GithubSource's own "prerelease" switch is
