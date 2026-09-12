@@ -161,8 +161,22 @@ public partial class MainWindow : Window
                 RunSafely(() => _vm.SignInToGitHubAsync(_cts.Token), "sign-in button");
             };
 
-        if (this.FindControl<Button>("ClaudeDownloadButton") is { } claudeDownload)
-            claudeDownload.Click += (_, _) => _vm.OpenClaudeDownloadPage();
+        // Through RunSafely for the same reason the colour picker is (see HookColorItem):
+        // ShowDialog can throw, and an async void handler would swallow it.
+        if (this.FindControl<Button>("ClaudeSignInButton") is { } claudeSignIn)
+            claudeSignIn.Click += (_, _) => RunSafely(async () =>
+            {
+                await _vm.SignInToClaudeAsync(
+                    () => Views.ClaudeSignInWindow.SignInAsync(this), _cts.Token);
+                UpdateTrayIcon();
+            }, "Claude sign-in button");
+
+        if (this.FindControl<MenuItem>("ClaudeSignOutItem") is { } claudeSignOut)
+            claudeSignOut.Click += (_, _) => RunSafely(async () =>
+            {
+                await _vm.SignOutOfClaudeAsync(_cts.Token);
+                UpdateTrayIcon();
+            }, "Claude sign-out");
 
         // Clicking a section header collapses or expands that panel.
         HookHeader("ClaudeHeader", () => _vm.ClaudeSolo, () => _vm.ClaudeCollapsed = !_vm.ClaudeCollapsed);
@@ -260,7 +274,8 @@ public partial class MainWindow : Window
         // they must be set after it to win over the move cursor they would inherit.
         foreach (var name in new[]
                  {
-                     "RefreshButton", "CloseButton", "PinButton", "SignInButton", "ClaudeDownloadButton",
+                     "RefreshButton", "CloseButton", "PinButton", "SignInButton",
+                     "ClaudeSignInButton",
                  })
         {
             if (this.FindControl<Control>(name) is { } c) c.Cursor = hand;

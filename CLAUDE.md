@@ -24,10 +24,14 @@ Durable findings live in [.claude/memory/](.claude/memory/) — read
 ## Gotchas
 
 - **Claude bars must come from the API, not transcripts.** `api.anthropic.com/api/oauth/usage`
-  (Bearer token from `~/.claude/.credentials.json`, header `anthropic-beta: oauth-2025-04-20`)
-  returns the same utilization claude.ai shows. Transcripts cannot reproduce it: the ceiling
-  is unpublished and the limits reset at fixed times rather than rolling. Never write to the
-  credentials file — Claude Code owns and refreshes it.
+  (Bearer token, header `anthropic-beta: oauth-2025-04-20`) returns the same utilization
+  claude.ai shows. Transcripts cannot reproduce it: the ceiling is unpublished and the limits
+  reset at fixed times rather than rolling. The token comes from the widget's own sign-in —
+  see [Claude sign-in](#claude-sign-in).
+- **Never read or write `~/.claude/.credentials.json`.** The widget used to borrow Claude
+  Code's token from it; that is gone deliberately. It only ever worked where the CLI was
+  installed and used often enough to keep the token fresh, and the widget could not refresh
+  it itself without risking a running CLI's credentials.
 - **Trimming must stay off.** Avalonia resolves XAML by reflection; trimming breaks it only
   in published builds, where it is hardest to diagnose.
 - `Grid.ColumnDefinitions` cannot be bound in Avalonia — the bars are a custom-drawn
@@ -36,6 +40,42 @@ Durable findings live in [.claude/memory/](.claude/memory/) — read
 - **`vpk pack` needs an unpacked publish folder, not a single-file exe.** That's why the
   csproj carries no `PublishSingleFile` — see [Update mechanism](#update-mechanism) for what
   replaced it. Don't re-add single-file publishing without also removing Velopack.
+
+## Claude sign-in
+
+The widget is its own OAuth client ([Services/ClaudeOAuth.cs](Services/ClaudeOAuth.cs)) and
+this is the **only** way it gets a Claude token. The user signs in once per machine; the
+widget refreshes the token itself from then on, so it works identically whether or not
+Claude Code is installed. There is one code path, not two.
+
+- Authorization-code + **PKCE**, not a device flow: Anthropic exposes no device-code grant
+  for this client. The redirect is Anthropic's own hosted callback page, which displays a
+  code for the user to paste back — so the paste box in
+  [Views/ClaudeSignInWindow.axaml](Views/ClaudeSignInWindow.axaml) is the flow, not a
+  shortcut. A localhost listener is not an option: the client_id is fixed and shared, so
+  only already-registered redirect URIs are accepted.
+- **The `state` check is the only CSRF defence** this shape has, since there is no browser
+  redirect to trust. The pasted code arrives as `CODE#STATE`; the state half is compared in
+  constant time and a paste carrying no state is refused outright rather than exchanged.
+  Don't "simplify" that away.
+- **Scope is deliberately narrower than Claude Code's**: only `user:profile`. Not
+  `user:inference` (would let a leaked token spend the user's quota on model calls) and not
+  `org:create_api_key` (would let it mint durable keys). A token this app stores must not be
+  able to do more than this app does.
+- Tokens live in `%LocalAppData%/<AppFolder>/claude.json`, **DPAPI-encrypted at rest** on
+  Windows and owner-only on every OS. macOS/Linux fall back to plaintext-with-permissions,
+  as Claude Code itself does there — a keyring daemon cannot be assumed on a headless
+  session.
+- **Refresh tokens rotate**: each refresh invalidates the one it used, so the new set is
+  written to disk inside `RefreshAsync` rather than by its caller, and refreshes are
+  serialised behind a semaphore. Two concurrent refreshes would race to spend the same
+  token and sign the user out.
+- Token endpoints are tried newest-host-first (`platform.claude.com`, then
+  `console.anthropic.com`) because Anthropic migrated them mid-life; a 404 falls through,
+  a real OAuth refusal does not.
+- A refused grant clears the stored tokens so the panel offers a sign-in; a *transport*
+  failure deliberately does not, so an offline laptop is never signed out or told to
+  re-authenticate over a connection it does not have.
 
 ## Update mechanism
 

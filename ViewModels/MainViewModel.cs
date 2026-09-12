@@ -176,23 +176,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private DateTimeOffset _nextRefresh = DateTimeOffset.UtcNow;
 
     /// <summary>
-    /// When this view model was constructed, i.e. app launch. Used only to recognise the
-    /// boot-time window in which a "session expired" reading is more likely Claude Code's
-    /// own background token refresh not having run yet than a real sign-out - see
-    /// <see cref="IsClaudeSessionRaceWindow"/>.
-    /// </summary>
-    private readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
-
-    /// <summary>
-    /// How long after launch a "session expired" failure is still assumed to be the boot
-    /// race rather than a genuine sign-out. Claude Code refreshes its token roughly every
-    /// eight hours, so a token that is still expired this long after launch was not merely
-    /// caught mid-refresh - retrying faster would not help, so the failure reverts to
-    /// non-transient once this window passes.
-    /// </summary>
-    private static readonly TimeSpan ClaudeSessionRaceWindow = TimeSpan.FromMinutes(2);
-
-    /// <summary>
     /// Set once every active Claude limit is spent, to the earliest of their reset times -
     /// there is nothing left to poll for until then, and the endpoint behind this call is
     /// undocumented and rate-limits hard (see CLAUDE.md), so a maxed-out account should not
@@ -217,10 +200,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     /// <summary>
     /// Set when the poll that just finished failed to reach Claude for a reason a few more
-    /// seconds could fix - see <see cref="ClaudeLimitsStatus.IsTransientFailure"/>, plus
-    /// "session expired" specifically while still inside <see cref="IsClaudeSessionRaceWindow"/>
-    /// - as opposed to "not signed in", or a "session expired" reading that has outlasted
-    /// that window, which polling again sooner cannot help. Folded into
+    /// seconds could fix - see <see cref="ClaudeLimitsStatus.IsTransientFailure"/> - as
+    /// opposed to "not signed in", which polling again sooner cannot help. Folded into
     /// <see cref="NothingToShow"/> so a boot-time race that only knocks out Claude
     /// (Copilot's endpoint came up first, say) still gets the fast retry: the old
     /// all-or-nothing check stood the back-off down the moment any one service had data,
@@ -230,18 +211,21 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private bool _claudeTransientFailure;
 
     /// <summary>
-    /// Whether "session expired" right now is still plausibly Claude Code's own background
-    /// token refresh not having caught up yet, rather than a real sign-out - see
-    /// <see cref="ClaudeSessionRaceWindow"/>.
+    /// Whether signing in from this app would fix the Claude panel - set from
+    /// ClaudeLimitsStatus.CanSignIn. Drives the panel's sign-in button, and is what makes
+    /// the panel useful on a machine that has never had Claude Code on it.
     /// </summary>
-    private bool IsClaudeSessionRaceWindow => DateTimeOffset.UtcNow - _startedAt < ClaudeSessionRaceWindow;
+    private bool _claudeCanSignIn;
 
     /// <summary>
-    /// Whether the last poll failed because Claude Code is signed out or its token expired,
-    /// as opposed to not being on this machine at all. Drives which explainer the panel
-    /// shows in place of its bars - see <see cref="ClaudeExplainerText"/>.
+    /// Whether the Claude figures on screen came from this app's own sign-in rather than
+    /// from Claude Code's credentials file. Only this case offers "Sign out of Claude" -
+    /// there is nothing for that command to do about a token the CLI owns.
     /// </summary>
-    private bool _claudeSignedOut;
+    private bool _claudeUsingOwnLogin;
+
+    /// <summary>Re-entry guard for the sign-in dialog, which is modal but launched from two places.</summary>
+    private bool _claudeSignInRunning;
 
     /// <summary>
     /// Whether any poll this run has returned real limits. Gates keeping stale bars up
@@ -509,7 +493,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         {
             if (Set(ref _claudeVisible, value))
             {
-                OnPropertyChanged(nameof(ClaudeNeedsInstall));
+                OnPropertyChanged(nameof(ClaudeNeedsSignIn));
                 ClaudeBodyChanged();
                 OnBarsChanged();
             }
@@ -519,48 +503,58 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     /// <summary>
     /// True when Claude has nothing to show, so the panel should offer the explainer and
-    /// download link instead of bars. Named "install" rather than "sign-in" (contrast
-    /// CopilotNeedsSignIn) because the far more common reason is that Claude Code was never
-    /// installed on this machine at all, not that it is installed but signed out.
+    /// the sign-in button instead of bars.
     /// </summary>
-    public bool ClaudeNeedsInstall => !_claudeVisible;
+    public bool ClaudeNeedsSignIn => !_claudeVisible;
 
     /// <summary>
-    /// The two things the Claude panel's body can be: its bars, or the install explainer
+    /// The two things the Claude panel's body can be: its bars, or the sign-in explainer
     /// standing in for them. Both gate on ClaudeExpanded, so collapsing the header hides
     /// whichever is showing - an explainer that ignored it would leave the panel refusing
     /// to collapse while its chevron claimed it had.
     /// </summary>
-    public bool ClaudeBarsVisible => ClaudeExpanded && !ClaudeNeedsInstall;
-    public bool ClaudeInstallHintVisible => ClaudeExpanded && ClaudeNeedsInstall;
+    public bool ClaudeBarsVisible => ClaudeExpanded && !ClaudeNeedsSignIn;
+    public bool ClaudeInstallHintVisible => ClaudeExpanded && ClaudeNeedsSignIn;
 
     /// <summary>
-    /// What the panel says in place of its bars. An expired token proves Claude Code is
-    /// installed and was signed in on this machine, so telling that user to install it - the
-    /// only thing this panel used to say, whatever the reason - reads as the app failing to
-    /// see an install that is plainly there. It resolves itself once Claude Code refreshes
-    /// the token, so the text says to wait rather than to fix anything.
+    /// What the panel says in place of its bars.
+    ///
+    /// Tracks <see cref="ClaudeSignInVisible"/> rather than assuming a sign-in is always the
+    /// answer: the panel also stands empty when a poll simply could not reach Anthropic -
+    /// the commonest case being the very first poll at boot, before the network is up - and
+    /// telling that user to sign in would be wrong twice over. They may already be signed in,
+    /// and the button that text points at is hidden, leaving an instruction with nothing to
+    /// act on. That pairing is the reason both halves are raised together in
+    /// <see cref="ClaudeExplainerChanged"/>.
     /// </summary>
-    public string ClaudeExplainerText => _claudeSignedOut
-        ? "The session for Claude Code has expired, but usage report will appear automatically here when you ask Claude the next time."
-        : "Claude Code isn't available on this machine. Install it to see usage here, or right-click this window to hide the Claude panel.";
+    public string ClaudeExplainerText => _claudeCanSignIn
+        ? "Sign in to see your Claude usage here. This is a one-time sign-in for this machine - "
+          + "right-click this window to hide the Claude panel instead."
+        : "Claude usage is unavailable right now - this usually clears on its own within a "
+          + "few seconds. Right-click this window to hide the Claude panel.";
 
     /// <summary>
-    /// The download button only makes sense for a machine without Claude Code: offering
-    /// "Get Claude Code" to someone who already has it is the same wrong claim the text
-    /// used to make.
+    /// Whether to offer the Claude sign-in - the only way the panel ever gets a token, so
+    /// it shows whenever there is nothing to display.
     /// </summary>
-    public bool ClaudeDownloadVisible => !_claudeSignedOut;
+    public bool ClaudeSignInVisible => _claudeCanSignIn;
 
     /// <summary>
-    /// Announces the explainer's two halves together, for the same reason
-    /// <see cref="ClaudeBodyChanged"/> exists: both read <see cref="_claudeSignedOut"/>, so
-    /// a caller that raised one and not the other would leave a stale pairing on screen.
+    /// Whether "Sign out of Claude" should appear in the context menu - only when there is
+    /// a stored sign-in to forget.
+    /// </summary>
+    public bool ClaudeSignOutVisible { get => _claudeUsingOwnLogin; }
+
+    /// <summary>
+    /// Announces the panel's two sign-in affordances together - the in-panel button and the
+    /// context menu's sign-out - so a caller that changed one input cannot leave the other
+    /// stale on screen.
     /// </summary>
     private void ClaudeExplainerChanged()
     {
         OnPropertyChanged(nameof(ClaudeExplainerText));
-        OnPropertyChanged(nameof(ClaudeDownloadVisible));
+        OnPropertyChanged(nameof(ClaudeSignInVisible));
+        OnPropertyChanged(nameof(ClaudeSignOutVisible));
     }
 
     /// <summary>
@@ -631,10 +625,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
     // clears atomically with the data that makes a panel worth showing.
     //
     // Claude, unlike Copilot and pacing, stays visible even when the service has nothing to
-    // show: Claude Code not being installed is the single most likely reason someone opens
-    // this widget and sees an empty window, and a panel that only appears once Claude Code
-    // is already set up is the worst possible place to explain that (see ClaudeNeedsInstall
-    // below, which drives the explainer shown in its place).
+    // show: not being signed in yet is the single most likely reason someone opens this
+    // widget and sees an empty window, and a panel that only appears once the sign-in is
+    // already done is the worst possible place to offer it (see ClaudeNeedsSignIn below,
+    // which drives the explainer and button shown in its place).
     public bool ClaudeVisible => !_isLoading && !_claudeHidden;
     public bool CopilotVisible => !_isLoading && _copilotVisible && !_copilotHidden;
     public bool PacingVisible => !_isLoading && _pacingVisible && !_pacingHidden;
@@ -1344,25 +1338,32 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 _claudePlan = limits.Plan;
             }
 
-            // An expired token is proof Claude Code is installed and was signed in here at
-            // some point - the credentials file exists and parsed. That is a different
-            // problem from "not on this machine", and the explainer says so.
-            _claudeSignedOut = !limits.IsAvailable && limits.IsExpiredSession;
+            // Offer the sign-in only while the panel has nothing of its own to show. A
+            // successful poll never needs it, and a failure that kept its stale bars (below)
+            // would otherwise put a sign-in button under figures still on screen.
+            _claudeCanSignIn = !limits.IsAvailable && limits.CanSignIn;
+
+            // Reported by the service, which has just read the token store to make this
+            // call - see ClaudeLimitsStatus.HasStoredSignIn. Re-reading it here would put a
+            // file read and a DPAPI decrypt on the UI thread on every single poll, to decide
+            // whether one context-menu item is visible.
+            _claudeUsingOwnLogin = limits.HasStoredSignIn;
+
             ClaudeExplainerChanged();
 
             // Bars already on screen are worth more than an explainer standing where they
-            // were. An expired token says nothing about the figures last polled - they were
-            // true when read and Claude Code refreshes the token on its own - so a session
-            // that expires under an idle window keeps its bars and reports the staleness in
-            // the subtitle, instead of replacing a full panel with "install Claude Code".
-            // Only a failure with nothing behind it - no successful poll this run - gives
-            // the panel over to the explainer.
-            var keepStaleBars = !limits.IsAvailable && limits.IsExpiredSession && _claudeHasPolled;
+            // were. A transient failure - the network down, a refresh that could not reach
+            // Anthropic - says nothing about the figures last polled: they were true when
+            // read and the token renews itself once the connection is back. So a blip under
+            // an idle window keeps its bars and reports the staleness in the subtitle
+            // instead of replacing a full panel with a sign-in prompt. Only a failure that
+            // actually needs the user - or one with nothing behind it - gives the panel over
+            // to the explainer.
+            var keepStaleBars = !limits.IsAvailable && limits.IsTransientFailure && _claudeHasPolled;
 
             ClaudeAvailable = limits.IsAvailable || keepStaleBars;
             _claudeFound = limits.IsAvailable;
-            _claudeTransientFailure = !limits.IsAvailable &&
-                (limits.IsTransientFailure || (limits.IsExpiredSession && IsClaudeSessionRaceWindow));
+            _claudeTransientFailure = !limits.IsAvailable && limits.IsTransientFailure;
             if (limits.IsAvailable) _claudeHasPolled = true;
             ClaudeSubtitle = limits.IsAvailable ? (_claudePlan ?? "") : (limits.Error ?? "");
         }
@@ -1565,6 +1566,80 @@ public sealed class MainViewModel : INotifyPropertyChanged
     }
 
     /// <summary>
+    /// Runs this app's own Claude sign-in, so the panel works on a machine that has never
+    /// had Claude Code installed.
+    ///
+    /// The dialog is modal and owns the OAuth attempt (see ClaudeSignInWindow), so this is
+    /// only the plumbing around it: guard against a second dialog, then refresh the panel
+    /// immediately on success rather than leaving the user looking at the explainer until
+    /// the next poll comes round.
+    ///
+    /// <paramref name="showDialog"/> is injected rather than constructed here so the view
+    /// model keeps no reference to a Window - the same separation every other dialog in
+    /// this app uses (see MainWindow's colour-picker wiring).
+    /// </summary>
+    public async Task SignInToClaudeAsync(Func<Task<bool>> showDialog, CancellationToken ct = default)
+    {
+        if (_claudeSignInRunning) return;
+        _claudeSignInRunning = true;
+        try
+        {
+            if (!await showDialog().ConfigureAwait(true)) return;
+
+            // A fresh sign-in invalidates every reason the panel had to be skipping polls:
+            // the gate below is keyed on limits that were read with a token we no longer
+            // use, and a forced refresh is what the user just asked for by signing in.
+            _claudeSkipUntil = null;
+            await RefreshClaudeAsync(ct, force: true).ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            ClaudeSubtitle = "sign-in failed: " + ex.Message;
+        }
+        finally
+        {
+            _claudeSignInRunning = false;
+        }
+    }
+
+    /// <summary>
+    /// Discards this app's own Claude tokens. Only ever offered while the panel is actually
+    /// running on them (see <see cref="ClaudeSignOutVisible"/>), so it cannot be mistaken
+    /// for a way to sign the machine's Claude Code out.
+    ///
+    /// This clears the local copy; it does not revoke the grant at Anthropic's end, which
+    /// only the account page can do. That is the same boundary the GitHub token has.
+    /// </summary>
+    public async Task SignOutOfClaudeAsync(CancellationToken ct = default)
+    {
+        var cleared = ClaudeTokenStore.Clear();
+
+        _claudeHasPolled = false;       // nothing polled with the new (absent) credentials
+        _claudeSkipUntil = null;
+
+        // No _claudeUsingOwnLogin / ClaudeExplainerChanged here: the forced refresh below
+        // sets both from what is actually on disk now, so doing it twice would only raise a
+        // duplicate notification - and would claim the token was gone before checking.
+        try
+        {
+            await RefreshClaudeAsync(ct, force: true).ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        // Deleting can fail - a locked or read-only file - and Clear() cannot throw without
+        // taking the menu click with it. Saying nothing would leave the user believing they
+        // had signed out while a live refresh token sat on disk, so the panel says otherwise.
+        if (!cleared)
+            ClaudeSubtitle = "sign-out failed - the token file could not be deleted";
+    }
+
+    /// <summary>
     /// The running build's version, shown as a non-interactive entry in the context menu
     /// now that the app updates itself silently (see Services/UpdateService.cs) - without
     /// this there was no on-screen way to tell which build was actually running.
@@ -1598,12 +1673,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     /// <summary>Opens the project page in the default browser.</summary>
     public void OpenProjectPage() => TryOpenBrowser(ProjectUrl);
-
-    /// <summary>Where the Claude panel's install link sends people when Claude Code is not found.</summary>
-    public const string ClaudeDownloadUrl = "https://code.claude.com/docs/en/overview";
-
-    /// <summary>Opens the Claude Code install docs in the default browser.</summary>
-    public void OpenClaudeDownloadPage() => TryOpenBrowser(ClaudeDownloadUrl);
 
     /// <summary>Opens the folder holding the running executable, in the OS file browser.</summary>
     public void OpenApplicationFolder() => OpenFolder(ApplicationFolder);

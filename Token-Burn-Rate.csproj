@@ -9,7 +9,7 @@
 	<Copyright>©2026 Dennis Helligsø</Copyright>
 
 	<AssemblyVersion>1.0.0</AssemblyVersion>
-	<InformationalVersion>1.0.0-beta.2</InformationalVersion>
+	<InformationalVersion>1.0.0-beta.3</InformationalVersion>
 
 	<!-- Must stay below the two properties they read: MSBuild evaluates a PropertyGroup
 	     top-to-bottom, so placing these first silently resolved FileVersion to empty and
@@ -69,5 +69,16 @@
       <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Velopack" Version="1.2.0" />
+    <!-- DPAPI, for encrypting the Claude OAuth refresh token at rest - see ClaudeTokenStore.
+         Referenced for every RID on purpose, even though Protect/Unprotect only ever run on
+         Windows (they early-return behind OperatingSystem.IsWindows()).
+
+         Making it win-only was tried and reverted: the reference is what puts ProtectedData
+         and DataProtectionScope on the compiler's radar at all, so dropping it for linux-x64
+         or osx-* fails the build outright with CS1069 rather than quietly excluding dead
+         code. Gating it would mean wrapping the call sites in #if as well, which buys back
+         one small assembly per non-Windows installer in exchange for conditional compilation
+         in the most security-sensitive file in the project. Not worth it. -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
   </ItemGroup>
 </Project>

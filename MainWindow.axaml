@@ -114,7 +114,7 @@
         <!-- Copilot and My Pace drop out of the menu entirely when they have no data at
              all: on a machine without Copilot, an entry that can never do anything is
              noise. Claude is the exception - it stays visible with no data too (see
-             ClaudeNeedsInstall in the panel above), so hiding it is always a real, useful
+             ClaudeNeedsSignIn in the panel above), so hiding it is always a real, useful
              toggle and this entry is never conditioned on ClaudeAvailable. -->
         <!-- Deliberately not bound to IsEnabled: the last panel standing still reads as a
              normal, black menu entry, because it is not broken - it is simply the one that
@@ -190,6 +190,13 @@
                     IsEnabled="{Binding AutoUpdate}"
                     ToolTip.Tip="Also offer BETA builds when checking for updates"/>
           <Separator/>
+          <!-- Only shown when there is a stored Claude sign-in to forget. It shares the
+               group below rather than standing in one of its own: a second separator here
+               would leave it fenced off between two rules when shown, and collapse into a
+               doubled rule when hidden. -->
+          <MenuItem Name="ClaudeSignOutItem" Header="Sign out of Claude"
+                    IsVisible="{Binding ClaudeSignOutVisible}"
+                    ToolTip.Tip="Forget the Claude sign-in stored by this widget"/>
           <MenuItem Name="OpenFolderItem" Header="Open application folder"
                     ToolTip.Tip="Open the folder holding the executable"/>
           <!-- Only shown when it differs from the application folder - a Velopack install
@@ -274,9 +281,9 @@
                    TextTrimming="None" TextWrapping="Wrap"/>
       </StackPanel>
 
-      <!-- Claude: stays visible even with nothing to show, so a machine without Claude Code
-           installed still tells people the panel exists and how to get data into it, rather
-           than silently omitting the panel altogether (see ClaudeNeedsInstall). -->
+      <!-- Claude: stays visible even with nothing to show, so a machine that has not signed
+           in yet still tells people the panel exists and how to get data into it, rather
+           than silently omitting the panel altogether (see ClaudeNeedsSignIn). -->
       <StackPanel Spacing="6" IsVisible="{Binding ClaudeVisible}">
         <!-- The last panel standing cannot be collapsed, so it drops the chevron and the
              click affordance rather than offering a toggle that does nothing. -->
@@ -295,22 +302,20 @@
         <ItemsControl ItemsSource="{Binding ClaudeBars}" IsVisible="{Binding ClaudeBarsVisible}"
                       ItemTemplate="{StaticResource BarTemplate}"/>
 
-        <!-- Shown only when Claude Code is not usable from this machine - not installed,
-             not signed in, or a session that expired - so the panel still explains itself
-             instead of just vanishing. The wording and the download button both depend on
-             which of those it is: an expired session is not an install problem, and saying
-             so would contradict the Claude Code the user can see is installed. -->
+        <!-- Shown only while the widget has no usable Claude sign-in, so the panel explains
+             itself and offers the fix instead of just vanishing. -->
         <StackPanel Spacing="6" IsVisible="{Binding ClaudeInstallHintVisible}">
           <TextBlock Text="{Binding ClaudeExplainerText}"
                      Classes="subtitle" TextWrapping="Wrap" FontSize="11"/>
-          <Button Name="ClaudeDownloadButton"
-                  IsVisible="{Binding ClaudeDownloadVisible}"
+          <Button Name="ClaudeSignInButton"
+                  IsVisible="{Binding ClaudeSignInVisible}"
                   HorizontalAlignment="Stretch"
                   HorizontalContentAlignment="Center"
                   Padding="0,5" FontSize="10"
                   Background="{Binding ClaudeAccentColor, Converter={StaticResource Brush}}" Foreground="White"
                   BorderThickness="0" CornerRadius="4" Cursor="Hand"
-                  Content="Get Claude Code"/>
+                  ToolTip.Tip="Opens claude.ai in your browser to approve access"
+                  Content="Sign in to Claude"/>
         </StackPanel>
       </StackPanel>
 

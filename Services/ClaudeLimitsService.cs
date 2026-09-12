@@ -1,6 +1,4 @@
 using System;
-using System.Collections.Generic;
-using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
@@ -18,10 +16,16 @@ namespace TokenBurnRate.Services;
 /// could only ever guess at a denominator Anthropic does not publish, and which measured
 /// rolling lookbacks rather than the fixed reset windows the limits actually use.
 ///
-/// The OAuth access token is read from Claude Code's credential file and never written
-/// back: Claude Code owns that file and refreshes the token itself, roughly every eight
-/// hours. If the token is expired or missing we report that rather than attempting a
-/// refresh, so there is no chance of corrupting the credentials of a running CLI.
+/// The token comes from this app's own Claude sign-in (<see cref="ClaudeOAuth"/>) and from
+/// nowhere else. The widget is its own OAuth client: it signs in once per machine and
+/// refreshes the token itself from then on, so it works whether or not the `claude` CLI is
+/// installed, and there is a single path to reason about rather than two.
+///
+/// It deliberately no longer reads Claude Code's credentials file. Borrowing that token
+/// only ever worked on a machine where the CLI was installed, signed in, and used often
+/// enough to keep it fresh - the widget could not refresh it, because Claude Code owns that
+/// file and writing to it risked corrupting a running CLI's credentials. Signing in here
+/// removes that dependency entirely.
 /// </summary>
 public sealed class ClaudeLimitsService
 {
@@ -34,70 +38,126 @@ public sealed class ClaudeLimitsService
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("Token-Burn-Rate/1.0");
     }
 
-    public static string CredentialsPath
+    public async Task<ClaudeLimitsStatus> GetLimitsAsync(CancellationToken ct = default)
     {
-        get
+        var (tokens, refreshFailed) = await ResolveTokenAsync(ct).ConfigureAwait(false);
+        if (tokens is null)
         {
-            var configDir = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
-            if (!string.IsNullOrWhiteSpace(configDir))
-                return Path.Combine(configDir, ".credentials.json");
+            // Signed in, but the refresh could not be completed - the network is down, not
+            // the grant. Offering a sign-in button here would tell an offline user to
+            // re-authenticate over the connection they do not have, so this reports a
+            // transient failure and the next poll tries again.
+            // A refresh that could not complete still leaves the stored sign-in in place,
+            // so the sign-out menu item stays available; a refused grant has already been
+            // cleared, so it does not.
+            if (refreshFailed)
+                return ClaudeLimitsStatus.Unavailable("Claude unreachable", transient: true, hasStoredSignIn: true);
 
-            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            return Path.Combine(home, ".claude", ".credentials.json");
+            // No sign-in on this machine yet, or the grant was refused outright. Either way
+            // the fix is the same and the panel offers it.
+            return ClaudeLimitsStatus.Unavailable("not signed in", canSignIn: true);
+        }
+
+        // Two attempts at most: the second only ever happens after a 401 forced a refresh,
+        // so a token that has just been renewed still gets to answer the question before the
+        // panel reports a failure.
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                using var req = new HttpRequestMessage(HttpMethod.Get, UsageEndpoint);
+                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+                req.Headers.Add("anthropic-beta", "oauth-2025-04-20");
+
+                using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+
+                if (resp.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+                {
+                    // A 401 here does not prove the grant is dead, so the tokens are not
+                    // thrown away on the strength of it. The access token may simply have
+                    // aged out between the expiry check and this request, and a 401 can
+                    // equally mean the usage endpoint stopped accepting this token's scope
+                    // or the beta header - neither of which a new sign-in would fix.
+                    // Clearing on sight turned that into a loop: wipe, sign in, get the same
+                    // 401, wipe again, for as long as the user kept trying.
+                    //
+                    // So spend exactly one forced refresh on it. If that is refused,
+                    // RefreshAsync has already cleared the store and the grant really is
+                    // gone. If it succeeds and the retry still 401s, the token was never the
+                    // problem, and that is reported as transient rather than as a sign-out.
+                    if (attempt > 0)
+                        return ClaudeLimitsStatus.Unavailable("Claude rejected the session", transient: true, hasStoredSignIn: true);
+
+                    var (renewed, renewFailed) = await ForceRefreshAsync(ct).ConfigureAwait(false);
+                    if (renewed is null)
+                    {
+                        // Could not reach the endpoint to find out: the grant is untouched
+                        // and still on disk, so this is a blip, not a sign-out.
+                        return renewFailed
+                            ? ClaudeLimitsStatus.Unavailable("Claude unreachable", transient: true, hasStoredSignIn: true)
+                            : ClaudeLimitsStatus.Unavailable("Sign-in expired", canSignIn: true);
+                    }
+
+                    tokens = renewed;
+                    continue;
+                }
+
+                if (!resp.IsSuccessStatusCode)
+                    return ClaudeLimitsStatus.Unavailable($"usage API returned {(int)resp.StatusCode}", transient: true, hasStoredSignIn: true);
+
+                var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                var status = Parse(json);
+                status.Plan = tokens.SubscriptionType ?? status.Plan;
+                status.HasStoredSignIn = true;      // a token answered, so one is stored
+                return status;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // Network unreachable, DNS not resolved yet, TLS handshake failed, timed out -
+                // the boot-time case this whole flag exists for: the connection itself never
+                // completed, which a login could not have prevented and a few seconds usually
+                // fixes on its own.
+                return ClaudeLimitsStatus.Unavailable(ex.Message, transient: true, hasStoredSignIn: true);
+            }
         }
     }
 
-    public async Task<ClaudeLimitsStatus> GetLimitsAsync(CancellationToken ct = default)
+    /// <summary>
+    /// Refreshes regardless of the stored expiry, for the one case the expiry cannot speak
+    /// to: the server rejected an access token this app still believed was valid.
+    ///
+    /// Shares <see cref="ResolveTokenAsync"/>'s gate, because it spends the same rotating
+    /// refresh token and two concurrent refreshes would retire each other's.
+    /// </summary>
+    private async Task<(ClaudeTokens? Tokens, bool RefreshFailed)> ForceRefreshAsync(CancellationToken ct)
     {
-        string token;
-        string? plan;
+        await _refreshGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var cred = ReadCredentials();
-            if (cred is null)
-                return ClaudeLimitsStatus.Unavailable("not signed in to Claude Code");
-            if (cred.Value.Expired)
-                return ClaudeLimitsStatus.Unavailable("Session expired", expiredSession: true);
+            var stored = ClaudeTokenStore.Load();
+            if (stored is null) return (null, false);
 
-            token = cred.Value.AccessToken;
-            plan = cred.Value.SubscriptionType;
-        }
-        catch (Exception ex)
-        {
-            // A file that failed to read - as opposed to one that is absent or well-formed
-            // but signed out - is as likely to be Claude Code mid-rewrite as it is to be
-            // genuinely corrupt, so it is worth the same fast retry as a network hiccup.
-            return ClaudeLimitsStatus.Unavailable("credentials unreadable: " + ex.Message, transient: true);
-        }
-
-        try
-        {
-            using var req = new HttpRequestMessage(HttpMethod.Get, UsageEndpoint);
-            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            req.Headers.Add("anthropic-beta", "oauth-2025-04-20");
-
-            using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
-            if (resp.StatusCode == System.Net.HttpStatusCode.Unauthorized)
-                return ClaudeLimitsStatus.Unavailable("Session expired", expiredSession: true);
-            if (!resp.IsSuccessStatusCode)
-                return ClaudeLimitsStatus.Unavailable($"usage API returned {(int)resp.StatusCode}", transient: true);
-
-            var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-            var status = Parse(json);
-            status.Plan = plan ?? status.Plan;
-            return status;
+            var renewed = await (_oauth ??= new ClaudeOAuth())
+                .RefreshAsync(stored.RefreshToken, ct).ConfigureAwait(false);
+            return (renewed, false);
         }
         catch (OperationCanceledException)
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            // Network unreachable, DNS not resolved yet, TLS handshake failed, timed out -
-            // the boot-time case this whole flag exists for: the connection itself never
-            // completed, which a login could not have prevented and a few seconds usually
-            // fixes on its own.
-            return ClaudeLimitsStatus.Unavailable(ex.Message, transient: true);
+            // Could not reach the endpoint. The tokens stay put - see ResolveTokenAsync -
+            // and the caller reports this as a failure to renew rather than a sign-out.
+            return (null, true);
+        }
+        finally
+        {
+            _refreshGate.Release();
         }
     }
 
@@ -171,30 +231,62 @@ public sealed class ClaudeLimitsService
         => el.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String
            && DateTimeOffset.TryParse(v.GetString(), out var t) ? t : null;
 
-    private readonly record struct Credentials(string AccessToken, string? SubscriptionType, bool Expired);
-
-    private static Credentials? ReadCredentials()
+    /// <summary>
+    /// Returns the stored tokens, refreshing the access token first if it has expired.
+    ///
+    /// These are this app's own to maintain, which is what lets the widget keep working on
+    /// a machine where nothing else would ever refresh them. The refresh is serialised: the
+    /// poll timer and a manual refresh can both land here at once, and because each refresh
+    /// invalidates the previous refresh token, two concurrent attempts would race to spend
+    /// the same one and leave the loser holding a token the server has already retired.
+    ///
+    /// Returns a null token with <c>RefreshFailed</c> false when there is simply no sign-in
+    /// to use, or when the grant was refused outright - both mean the panel should offer a
+    /// sign-in. <c>RefreshFailed</c> is true instead when a sign-in exists but could not be
+    /// renewed right now, which is a transient condition and must not be reported as being
+    /// signed out.
+    /// </summary>
+    private async Task<(ClaudeTokens? Tokens, bool RefreshFailed)> ResolveTokenAsync(CancellationToken ct)
     {
-        var path = CredentialsPath;
-        if (!File.Exists(path)) return null;
+        var tokens = ClaudeTokenStore.Load();
+        if (tokens is null) return (null, false);
+        if (!tokens.Expired) return (tokens, false);
 
-        // Claude Code rewrites this file on refresh, so tolerate a concurrent write.
-        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read,
-            FileShare.ReadWrite | FileShare.Delete);
-        using var doc = JsonDocument.Parse(fs);
-
-        if (!doc.RootElement.TryGetProperty("claudeAiOauth", out var oauth)) return null;
-        var token = Str(oauth, "accessToken");
-        if (string.IsNullOrWhiteSpace(token)) return null;
-
-        var expired = false;
-        if (oauth.TryGetProperty("expiresAt", out var e) && e.ValueKind == JsonValueKind.Number)
+        await _refreshGate.WaitAsync(ct).ConfigureAwait(false);
+        try
         {
-            var expiresAt = DateTimeOffset.FromUnixTimeMilliseconds(e.GetInt64());
-            // Small skew allowance; the request would fail anyway and we surface the same message.
-            expired = expiresAt <= DateTimeOffset.UtcNow.AddSeconds(30);
-        }
+            // Re-read inside the gate: whoever held it may have just refreshed, in which
+            // case the stored set is already current and spending the refresh token again
+            // would retire the one that write just saved.
+            tokens = ClaudeTokenStore.Load();
+            if (tokens is null) return (null, false);
+            if (!tokens.Expired) return (tokens, false);
 
-        return new Credentials(token, Str(oauth, "subscriptionType"), expired);
+            // A null here is a refusal - RefreshAsync has already cleared the dead grant -
+            // so the panel should offer a sign-in rather than treat it as transient.
+            var refreshed = await (_oauth ??= new ClaudeOAuth())
+                .RefreshAsync(tokens.RefreshToken, ct).ConfigureAwait(false);
+            return (refreshed, false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            // A transport failure says nothing about the grant - an offline laptop must not
+            // be signed out by it, and must not be shown a sign-in button either. The stored
+            // tokens stay put and the caller reports a transient failure, so the next poll
+            // simply tries again.
+            return (null, true);
+        }
+        finally
+        {
+            _refreshGate.Release();
+        }
     }
+
+    private readonly SemaphoreSlim _refreshGate = new(1, 1);
+    private ClaudeOAuth? _oauth;
+
 }

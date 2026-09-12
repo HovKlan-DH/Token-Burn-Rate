@@ -114,29 +114,47 @@ public sealed class ClaudeLimitsStatus
     public bool IsAvailable => Error is null && Limits.Count > 0;
 
     /// <summary>
-    /// Whether this failure is worth fast-retrying: a network hiccup, an unreadable
-    /// credentials file, or an unexpected HTTP status can all clear themselves within
-    /// seconds, which is exactly the boot-time race where the network stack is not up yet
-    /// when the first poll runs. "not signed in" cannot be fixed by polling again sooner -
-    /// only a `claude` login does that - so it is excluded the same way Copilot's
-    /// NeedsSignIn is excluded from its own retry accounting. "session expired" is its own
-    /// flag below rather than being folded in here or excluded outright.
+    /// Whether this failure is worth fast-retrying: a network hiccup, a token refresh that
+    /// could not reach Anthropic, or an unexpected HTTP status can all clear themselves
+    /// within seconds, which is exactly the boot-time race where the network stack is not
+    /// up yet when the first poll runs. "not signed in" cannot be fixed by polling again
+    /// sooner - only the user signing in does that - so it is excluded the same way
+    /// Copilot's NeedsSignIn is excluded from its own retry accounting.
     /// </summary>
     public bool IsTransientFailure { get; init; }
 
     /// <summary>
-    /// Whether this failure specifically is a token past its <c>expiresAt</c>. Ordinarily
-    /// that means a real sign-out that no amount of retrying fixes - except right after the
-    /// app starts, where Claude Code's own background refresh (roughly every eight hours)
-    /// may simply not have run yet, leaving a technically-expired token on disk for a few
-    /// seconds. The view model is the one that knows how long ago the app started, so it
-    /// decides whether this is worth a fast retry; this flag just tells it which failure it
-    /// is looking at.
+    /// Whether signing in to Claude from this app would fix the panel - the Claude analogue
+    /// of CopilotStatus.NeedsSignIn.
+    ///
+    /// Set both when no sign-in exists on this machine yet and when the stored grant was
+    /// refused outright (revoked, or invalidated by a password change). Those are the same
+    /// situation from the panel's point of view: there is no usable token and only the user
+    /// can supply one. A failure that merely could not reach Anthropic is a transient
+    /// failure instead, so an offline machine is never told to sign in again.
     /// </summary>
-    public bool IsExpiredSession { get; init; }
+    public bool CanSignIn { get; init; }
 
-    public static ClaudeLimitsStatus Unavailable(string error, bool transient = false, bool expiredSession = false) =>
-        new() { Error = error, IsTransientFailure = transient, IsExpiredSession = expiredSession };
+    /// <summary>
+    /// Whether a Claude sign-in of this app's own is stored on this machine - what the
+    /// context menu's "Sign out of Claude" acts on.
+    ///
+    /// Reported here rather than re-read from the token store by the view model: answering
+    /// it means a file read, a DPAPI decrypt and a JSON parse, and the service has just done
+    /// all three to build this status. Asking again on every poll would put that work on the
+    /// UI thread purely to decide whether one menu item is visible.
+    /// </summary>
+    public bool HasStoredSignIn { get; set; }
+
+    public static ClaudeLimitsStatus Unavailable(
+        string error, bool transient = false, bool canSignIn = false, bool hasStoredSignIn = false) =>
+        new()
+        {
+            Error = error,
+            IsTransientFailure = transient,
+            CanSignIn = canSignIn,
+            HasStoredSignIn = hasStoredSignIn,
+        };
 }
 
 /// <summary>

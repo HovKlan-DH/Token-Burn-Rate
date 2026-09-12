@@ -55,7 +55,20 @@ public partial class ColorPickerWindow : Window
         var picker = window.FindControl<ColorPicker>("Picker")!;
         picker.Color = TryParse(currentHex) ?? Colors.Gray;
 
-        await window.ShowDialog(owner);
+        // Stands the widget's pin down for the life of the dialog - see the same dance in
+        // ClaudeSignInWindow.SignInAsync for why a modal alone does not outrank a topmost
+        // owner, and why this is set on the window rather than through MainViewModel.Pinned.
+        var wasTopmost = owner.Topmost;
+        owner.Topmost = false;
+        try
+        {
+            await window.ShowDialog(owner);
+        }
+        finally
+        {
+            owner.Topmost = wasTopmost;
+        }
+
         return window._result;
     }
 

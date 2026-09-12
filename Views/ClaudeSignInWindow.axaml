@@ -1,0 +1,83 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="TokenBurnRate.Views.ClaudeSignInWindow"
+        Title="Sign in to Claude"
+        Width="400" SizeToContent="Height"
+        CanResize="False"
+        CanMinimize="False"
+        CanMaximize="False"
+        WindowStartupLocation="CenterOwner"
+        WindowDecorations="Full"
+        ShowInTaskbar="True"
+        Background="#1A1B1E"
+        RequestedThemeVariant="Dark"
+        Topmost="True">
+
+  <Window.Styles>
+    <Style Selector="Button.action">
+      <Setter Property="Padding" Value="10,5"/>
+      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="CornerRadius" Value="4"/>
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+    <Style Selector="TextBlock.body">
+      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="Foreground" Value="#8A8F98"/>
+      <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+    <Style Selector="TextBlock.step">
+      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="Foreground" Value="#E8EAED"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+    </Style>
+  </Window.Styles>
+
+  <StackPanel Margin="16" Spacing="12">
+    <TextBlock Text="Sign in to Claude" FontSize="13" FontWeight="SemiBold" Foreground="#E8EAED"/>
+
+    <!-- Says plainly what the sign-in is for and what it is not, because this app asking
+         for a Claude login is exactly the shape a credential-phishing prompt takes. The
+         user should be able to tell the difference without taking our word for it, so the
+         text points at where the browser will land and what the grant can do. -->
+    <TextBlock Classes="body"
+               Text="This lets the widget read your Claude usage without Claude Code being installed. It opens claude.ai in your browser - you approve the same way Claude Code does, and your password is never seen by this app."/>
+
+    <Border Background="#26282D" CornerRadius="4" Padding="12">
+      <StackPanel Spacing="8">
+        <TextBlock Classes="step" Text="1.  Approve in your browser"/>
+        <TextBlock Classes="body"
+                   Text="Your browser should have opened. If not, use the button below to open it again."/>
+        <!-- Reads as a link rather than a button: it is the fallback for a browser that did
+             not open, not the step the user is meant to take, and a second filled button
+             beside "Sign in" would compete with it. -->
+        <Button Name="OpenBrowserButton" Classes="action" HorizontalAlignment="Left"
+                Background="Transparent" Foreground="#6CA8F5" Padding="0,2"
+                Content="Open the sign-in page again"/>
+
+        <TextBlock Classes="step" Text="2.  Paste the code you are shown" Margin="0,4,0,0"/>
+        <TextBlock Classes="body"
+                   Text="Claude shows a code after you approve. Copy it and paste it here."/>
+        <TextBox Name="CodeBox"
+                 PlaceholderText="Paste the code here"
+                 FontSize="11"
+                 Background="#1A1B1E" Foreground="#E8EAED"
+                 BorderBrush="#3A3D44" BorderThickness="1" CornerRadius="4"
+                 Padding="8,6"/>
+      </StackPanel>
+    </Border>
+
+    <!-- Only ever populated from a local validation message or the OAuth error field; no
+         response body is echoed here verbatim. -->
+    <TextBlock Name="ErrorText" Classes="body" Foreground="#E5534B" IsVisible="False"/>
+
+    <Grid ColumnDefinitions="*,Auto,Auto">
+      <TextBlock Name="StatusText" Grid.Column="0" Classes="body"
+                 VerticalAlignment="Center" IsVisible="False"/>
+      <Button Name="CancelButton" Grid.Column="1" Classes="action" Content="Cancel"
+              Background="#26282D" Foreground="#E8EAED" Margin="0,0,8,0"/>
+      <Button Name="SignInButton" Grid.Column="2" Classes="action" Content="Sign in"
+              Background="#D97757" Foreground="White"/>
+    </Grid>
+  </StackPanel>
+</Window>
