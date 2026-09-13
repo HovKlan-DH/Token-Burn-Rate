@@ -19,10 +19,11 @@ usage, so you always know how much you have left.
 
 2. Run it and follow the installer. No admin rights are needed.
 
-   - **Windows** may show a blue "Windows protected your PC" screen, because the application
-     isn't signed. Click **More info**, then **Run anyway**.
-   - **macOS** may block the first launch as coming from an unidentified developer. Right-click
-     the application, choose **Open**, then confirm.
+   - **Windows** installers are code-signed, but may still briefly show a blue "Windows
+     protected your PC" screen until the signature builds up reputation with Microsoft. If
+     so, click **More info**, then **Run anyway**.
+   - **macOS** is not signed and will block the first launch as coming from an unidentified
+     developer. Right-click the application, choose **Open**, then confirm.
 
 3. The application opens automatically and stays on top of your other windows.
 
@@ -90,8 +91,9 @@ sign in.
 - Installs to the current user's local application data folder, not `Program Files`.
 - Self-updates automatically from GitHub Releases; this can be turned off per machine from
   the right-click menu (Advanced → Auto-update to newest version).
-- The Windows executable is unsigned, so SmartScreen and Defender SmartScreen will warn on
-  first run; macOS builds are unsigned too and require a right-click **Open** to bypass
+- The Windows installer and executable are code-signed (YubiKey-backed certificate); a
+  SmartScreen warning, if any, is reputation-based and temporary, not a sign of tampering.
+- macOS builds are not signed or notarized and require a right-click **Open** to bypass
   Gatekeeper.
 - Outbound HTTPS only, to: `api.anthropic.com` (Claude usage), `api.github.com` and
   `github.com` (Copilot usage and sign-in), and `mailscan.dk` (a version/OS check-in from
