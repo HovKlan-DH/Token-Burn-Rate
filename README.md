@@ -26,7 +26,7 @@ usage, so you always know how much you have left.
 
 3. The application opens automatically and stays on top of your other windows.
 
-That's it — updates after this happen by themselves in the background.
+That's it - updates after this happen by themselves in the background.
 
 ## Sign in
 
@@ -41,7 +41,7 @@ This is a one-time step. The application keeps you signed in after that.
 ### GitHub Copilot
 
 Click **Sign in to GitHub** in the Copilot panel. The application shows a short code and
-opens GitHub's device sign-in page — enter the code there and approve.
+opens GitHub's device sign-in page - enter the code there and approve.
 
 If you're already signed in to the GitHub CLI on your computer, this panel works right away
 with no extra steps.
@@ -72,20 +72,20 @@ over 100% and the number keeps counting, so you can see by how much.
 
 ## Everyday use
 
-- **Move it** — drag the top bar anywhere on screen; it reopens there next time.
-- **Refresh now** — click the small circular arrow, top right.
-- **Pin on top** — the pin icon toggles whether the application stays above other windows.
-- **Close to tray** — closing the application keeps it running quietly in the background;
+- **Move it** - drag the top bar anywhere on screen; it reopens there next time.
+- **Refresh now** - click the small circular arrow, top right.
+- **Pin on top** - the pin icon toggles whether the application stays above other windows.
+- **Close to tray** - closing the application keeps it running quietly in the background;
   click its icon in the system tray to bring it back.
-- **Right-click** the application for more options — show or hide individual panels, change
+- **Right-click** the application for more options - show or hide individual panels, change
   colors and text size, and other preferences.
 
-If a panel you're not signed in to isn't shown, that's expected — it appears as soon as you
+If a panel you're not signed in to isn't shown, that's expected - it appears as soon as you
 sign in.
 
 ## Information for IT organizations
 
-- No administrator rights are required to install or run — it installs per-user.
+- No administrator rights are required to install or run - it installs per-user.
 - Silent/unattended install is supported: run the Windows installer with `--silent`.
 - Installs to the current user's local application data folder, not `Program Files`.
 - Self-updates automatically from GitHub Releases; this can be turned off per machine from
@@ -97,7 +97,7 @@ sign in.
   `github.com` (Copilot usage and sign-in), and `mailscan.dk` (a version/OS check-in from
   the developer, no usage data).
 - Reads only usage figures already visible to the signed-in user on claude.ai and
-  github.com — no code, prompts, or repository content is ever accessed.
+  github.com - no code, prompts, or repository content is ever accessed.
 - Each user signs in individually with their own Claude and GitHub account; there is no
   shared or service account, and no credentials are centrally managed.
 - Sign-in tokens are stored locally per user (`%LocalAppData%` on Windows), encrypted at
