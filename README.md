@@ -89,7 +89,7 @@ sign in.
 - No administrator rights are required to install or run - it installs per-user.
 - Silent/unattended install is supported: run the Windows installer with `--silent`.
 - Installs to the current user's local application data folder, not `Program Files`.
-- Self-updates automatically from GitHub Releases; this can be turned off per machine from
+- Self-updates automatically from GitHub Releases; this can be turned off manually per machine (by the user) from
   the right-click menu (Advanced → Auto-update to newest version).
 - The Windows installer and executable are code-signed (YubiKey-backed certificate); a
   SmartScreen warning, if any, is reputation-based and temporary, not a sign of tampering.
