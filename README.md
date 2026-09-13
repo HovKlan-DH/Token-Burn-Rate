@@ -104,4 +104,4 @@ sign in.
 - Sign-in tokens are stored locally per user (`%LocalAppData%` on Windows), encrypted at-rest on Windows and owner-only readable elsewhere.
 - Registers a per-user autostart entry (`HKCU` on Windows) if left enabled; never writes to
   machine-wide (`HKLM`) locations.
-- Project is full open source: [github.com/HovKlan-DH/Token-Burn-Rate](https://github.com/HovKlan-DH/Token-Burn-Rate).
+- Project is full open source
