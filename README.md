@@ -88,7 +88,7 @@ sign in.
 - No administrator rights are required to install or run - it installs per-user.
 - Silent/unattended install is supported: run the Windows installer with `--silent`.
 - Installs to the current user's local application data folder, not `Program Files`.
-- Self-updates automatically from GitHub Releases; this can be turned off per machine from
+- Self-updates automatically from GitHub Releases; this can be turned off manually per machine (by the user) from
   the right-click menu (Advanced → Auto-update to newest version).
 - The Windows executable is unsigned, so SmartScreen and Defender SmartScreen will warn on
   first run; macOS builds are unsigned too and require a right-click **Open** to bypass
