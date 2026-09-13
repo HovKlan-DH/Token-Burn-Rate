@@ -178,6 +178,13 @@ public partial class MainWindow : Window
                 UpdateTrayIcon();
             }, "Claude sign-out");
 
+        if (this.FindControl<MenuItem>("CopilotSignOutItem") is { } copilotSignOut)
+            copilotSignOut.Click += (_, _) => RunSafely(async () =>
+            {
+                await _vm.SignOutOfGitHubAsync(_cts.Token);
+                UpdateTrayIcon();
+            }, "GitHub sign-out");
+
         // Clicking a section header collapses or expands that panel.
         HookHeader("ClaudeHeader", () => _vm.ClaudeSolo, () => _vm.ClaudeCollapsed = !_vm.ClaudeCollapsed);
         HookHeader("CopilotHeader", () => _vm.CopilotSolo, () => _vm.CopilotCollapsed = !_vm.CopilotCollapsed);

@@ -26,6 +26,30 @@ public sealed class CopilotQuota
     public double Percent => Entitlement > 0 ? Used / Entitlement * 100 : 0;
 }
 
+/// <summary>
+/// Which of the three independent places <see cref="CopilotUsageService"/> can get a token
+/// from actually supplied the one behind the current status.
+///
+/// This exists because "signed out" is not one state for Copilot the way it now is for
+/// Claude: an env var, a live `gh` CLI session, and this app's own device-flow token are all
+/// checked in turn, and any one of them being live is enough to show real data. A user who
+/// deletes this app's own token file (or clicks "Sign out of GitHub") but is still logged
+/// into `gh` on the same machine will keep seeing their account - correctly, since a signed-in
+/// `gh` really does mean signed-in-to-Copilot - but with no explanation that this app's own
+/// sign-out only ever touches the third source.
+/// </summary>
+public enum CopilotTokenSource
+{
+    /// <summary>No token was found from any source.</summary>
+    None,
+    /// <summary>GH_TOKEN or GITHUB_TOKEN was set in the environment.</summary>
+    EnvironmentVariable,
+    /// <summary>`gh auth token` returned a session - the GitHub CLI is signed in.</summary>
+    GitHubCli,
+    /// <summary>This app's own device-flow token, from "Sign in to GitHub".</summary>
+    OwnSignIn,
+}
+
 public sealed class CopilotStatus
 {
     public string Plan { get; init; } = "unknown";
@@ -35,6 +59,8 @@ public sealed class CopilotStatus
     public string? Error { get; set; }
     /// <summary>True when the fix is an interactive sign-in rather than a transient failure.</summary>
     public bool NeedsSignIn { get; set; }
+    /// <summary>Which source the token behind this result came from - see <see cref="CopilotTokenSource"/>.</summary>
+    public CopilotTokenSource TokenSource { get; set; }
     public bool IsAvailable => Error is null && Quotas.Count > 0;
 }
 

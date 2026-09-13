@@ -141,13 +141,6 @@ public sealed class BarViewModel : INotifyPropertyChanged
     /// </summary>
     public int TodayMarkerIndex { get => _todayMarkerIndex; set => Set(ref _todayMarkerIndex, value); }
 
-    /// <summary>
-    /// The reset time behind this bar's <see cref="Markers"/>, kept only so changing
-    /// "Workdays in a week" can recompute Claude's rolling-week markers immediately
-    /// instead of waiting for the next poll - see MainViewModel.WorkDaysPerWeek.
-    /// </summary>
-    public DateTimeOffset? MarkersResetsAt { get; set; }
-
     public event PropertyChangedEventHandler? PropertyChanged;
     private void OnPropertyChanged([CallerMemberName] string? n = null)
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(n));
@@ -261,6 +254,39 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private bool _copilotVisible = true;
     private bool _copilotNeedsSignIn;
     private bool _signInRunning;
+
+    /// <summary>
+    /// Cancels the device-flow sign-in that is currently polling GitHub for approval, if
+    /// any. Signing out while a sign-in is in flight has to stop it: the flow ends by
+    /// writing a fresh token to disk, which would silently undo the sign-out that happened
+    /// moments earlier.
+    /// </summary>
+    private CancellationTokenSource? _signInCts;
+
+    /// <summary>
+    /// Set when "Sign out of GitHub" could not delete the token file - a locked or read-only
+    /// profile. It survives subsequent polls, because the warning must not be quietly
+    /// replaced by the next healthy plan/org subtitle: another source may be answering while
+    /// a token this app still owns sits on disk, and the user believes they signed out.
+    /// Cleared as soon as a poll finds the file actually gone.
+    /// </summary>
+    private bool _copilotSignOutFailed;
+
+    /// <summary>
+    /// Whether the Copilot data on screen came from this app's own device-flow sign-in, as
+    /// opposed to an environment variable or a `gh` CLI session it merely noticed - see
+    /// <see cref="Models.CopilotTokenSource"/>. Only this case offers "Sign out of GitHub" in
+    /// the context menu, the same way <c>_claudeUsingOwnLogin</c> gates Claude's sign-out:
+    /// there is nothing for that command to do about a token this app does not own.
+    /// </summary>
+    private bool _copilotUsingOwnSignIn;
+
+    /// <summary>
+    /// Which source actually supplied the current Copilot token - kept for the subtitle
+    /// annotation that explains why data is showing when this app has no sign-in of its own
+    /// (see <see cref="CopilotSourceNote"/>). Absent whenever the panel has nothing to show.
+    /// </summary>
+    private Models.CopilotTokenSource _copilotTokenSource = Models.CopilotTokenSource.None;
     private bool _pacingVisible;
     private string _pacingSubtitle = "";
     // Kept apart from CopilotSubtitle so the pacing panel can borrow it when the Copilot
@@ -568,6 +594,38 @@ public sealed class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(ClaudeInstallHintVisible));
     }
 
+    /// <summary>
+    /// Announces both halves of the Copilot panel's body at once - the Copilot analogue of
+    /// <see cref="ClaudeBodyChanged"/>, for the same reason: CopilotBarsVisible and
+    /// CopilotSignInHintVisible are complements of the same two inputs (CopilotExpanded,
+    /// CopilotNeedsSignIn), so every caller that changes either has to raise both.
+    /// </summary>
+    private void CopilotBodyChanged()
+    {
+        OnPropertyChanged(nameof(CopilotBarsVisible));
+        OnPropertyChanged(nameof(CopilotSignInHintVisible));
+        OnPropertyChanged(nameof(CopilotSourceNoteVisible));
+    }
+
+    /// <summary>
+    /// Records which source supplied the current Copilot token and announces everything that
+    /// reads it - the source note, its visibility, and whether "Sign out of GitHub" applies.
+    ///
+    /// Routed through one method for the same reason <see cref="CopilotBodyChanged"/> is:
+    /// three properties derive from these two fields, and a caller that set them and raised
+    /// only some would leave the menu offering a sign-out for a token that is no longer in
+    /// use, or the panel crediting the wrong source.
+    /// </summary>
+    private void SetCopilotTokenSource(Models.CopilotTokenSource source)
+    {
+        _copilotTokenSource = source;
+        _copilotUsingOwnSignIn = source == Models.CopilotTokenSource.OwnSignIn;
+
+        OnPropertyChanged(nameof(CopilotSignOutVisible));
+        OnPropertyChanged(nameof(CopilotSourceNote));
+        OnPropertyChanged(nameof(CopilotSourceNoteVisible));
+    }
+
     public bool CopilotAvailable
     {
         get => _copilotVisible;
@@ -577,7 +635,77 @@ public sealed class MainViewModel : INotifyPropertyChanged
             StopLoading();
         }
     }
-    public bool CopilotNeedsSignIn { get => _copilotNeedsSignIn; set => Set(ref _copilotNeedsSignIn, value); }
+    public bool CopilotNeedsSignIn
+    {
+        get => _copilotNeedsSignIn;
+        set
+        {
+            if (!Set(ref _copilotNeedsSignIn, value)) return;
+
+            // Both, not just the first: this swaps the panel's body between its bars and the
+            // sign-in explainer, which changes which labels are on screen, and LabelWidth is
+            // shared across all three panels - so the Claude and Pacing bars would otherwise
+            // keep an indent earned by COMPLETIONS/PREMIUM labels that are no longer drawn.
+            // ClaudeAvailable's setter pairs the same two calls for the same reason.
+            CopilotBodyChanged();
+            OnBarsChanged();
+        }
+    }
+
+    /// <summary>
+    /// The two things the Copilot panel's body can be: its bars, or the sign-in explainer
+    /// standing in for them - the same split ClaudeBarsVisible/ClaudeInstallHintVisible make
+    /// for the Claude panel. Both gate on CopilotExpanded, so collapsing the header hides
+    /// whichever is showing.
+    ///
+    /// Before this, "not signed in" showed the bars anyway - three rows of "n/a" placeholder
+    /// dashes sitting above the sign-in button - which read as a broken panel rather than an
+    /// unconfigured one, especially beside the Claude panel's clear explainer for the same
+    /// situation on a machine with nothing signed in at all.
+    /// </summary>
+    public bool CopilotBarsVisible => CopilotExpanded && !CopilotNeedsSignIn;
+    public bool CopilotSignInHintVisible => CopilotExpanded && CopilotNeedsSignIn;
+
+    /// <summary>What the panel says in place of its bars while signed out.</summary>
+    public string CopilotExplainerText =>
+        "Sign in to see your GitHub Copilot usage here. This is a one-time sign-in for this machine.";
+
+    /// <summary>
+    /// Explains where the Copilot data on screen actually came from, whenever it is not this
+    /// app's own sign-in - empty otherwise, so the common case (this app's own token, or
+    /// nothing to show) adds nothing to the header row.
+    ///
+    /// This exists because "signed out of Copilot" is not one action: an environment
+    /// variable or a `gh` CLI session that is still live will keep showing real data even
+    /// after "Sign out of GitHub" clears this app's own token, and without this note that
+    /// reads as the sign-out having silently failed rather than as three independent sources
+    /// each being individually true.
+    /// </summary>
+    public string CopilotSourceNote => _copilotTokenSource switch
+    {
+        Models.CopilotTokenSource.GitHubCli => "via the gh CLI's own sign-in",
+        Models.CopilotTokenSource.EnvironmentVariable => "via GH_TOKEN / GITHUB_TOKEN",
+        _ => "",
+    };
+
+    /// <summary>
+    /// Whether <see cref="CopilotSourceNote"/> has anything to show - kept as its own bool
+    /// rather than binding the XAML to the string's length directly.
+    ///
+    /// Gated on CopilotExpanded like every other element of the panel's body: without it the
+    /// note stayed on screen under a collapsed header, leaving the panel visibly refusing to
+    /// collapse while its chevron claimed it had.
+    /// </summary>
+    public bool CopilotSourceNoteVisible => CopilotExpanded && CopilotSourceNote.Length > 0;
+
+    /// <summary>
+    /// Whether "Sign out of GitHub" should appear in the context menu - only when there is a
+    /// sign-in of this app's own to revoke, the Copilot analogue of ClaudeSignOutVisible.
+    /// Deliberately not offered for the `gh` CLI or environment-variable sources: this app
+    /// has no token of its own to forget in either case, and the command would do nothing.
+    /// </summary>
+    public bool CopilotSignOutVisible => _copilotUsingOwnSignIn;
+
     public string SignInText { get => _signInText; set => Set(ref _signInText, value); }
     /// <summary>
     /// The device-flow code on its own, separate from <see cref="SignInText"/> so the
@@ -832,6 +960,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(CopilotExpanded));
         OnPropertyChanged(nameof(PacingExpanded));
         ClaudeBodyChanged();
+        CopilotBodyChanged();
     }
 
     // Collapsing hides a panel's bars but keeps its header, so the panel can be reopened.
@@ -855,6 +984,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         {
             if (!Set(ref _copilotCollapsed, value)) return;
             OnPropertyChanged(nameof(CopilotExpanded));
+            CopilotBodyChanged();
             Persist();
             OnBarsChanged();
         }
@@ -1101,20 +1231,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
             // Recompute immediately from the last known status rather than waiting for the
             // next poll - otherwise the menu selection would appear to do nothing until the
-            // next refresh cycle.
+            // next refresh cycle. Claude's rolling week bar is unaffected: its markers are
+            // real calendar-day boundaries, not workday counts - see RollingWeekTodayMarkers.
             if (_lastCopilotStatus is { } status) RefreshPacing(status);
-
-            // Same for Claude's rolling week bar: it has no separate "last status" to replay,
-            // but the reset time it was last computed from is enough to redraw the markers.
-            // Keyed off Markers rather than MarkersResetsAt, since a weekly limit that has
-            // not started yet has ticks but no reset time, and would otherwise keep the old
-            // workday count's ticks while the My Pace bar beside it redrew.
-            foreach (var bar in ClaudeBars)
-                if (bar.Markers is not null)
-                {
-                    bar.Markers = RollingWeekMarkers(_workDaysPerWeek);
-                    bar.TodayMarkerIndex = RollingWeekTodayIndex(bar.MarkersResetsAt, _workDaysPerWeek);
-                }
         }
     }
 
@@ -1316,9 +1435,17 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     bar.DetailText = l.ResetText;
                     bar.IsEnabled = true;
                     var isWeekly = IsWeeklyLimit(l.Kind);
-                    bar.MarkersResetsAt = isWeekly ? l.ResetsAt : null;
-                    bar.Markers = isWeekly ? RollingWeekMarkers(_workDaysPerWeek) : null;
-                    bar.TodayMarkerIndex = isWeekly ? RollingWeekTodayIndex(l.ResetsAt, _workDaysPerWeek) : -1;
+                    if (isWeekly)
+                    {
+                        var (markers, todayIndex) = RollingWeekTodayMarkers(l.ResetsAt);
+                        bar.Markers = markers;
+                        bar.TodayMarkerIndex = todayIndex;
+                    }
+                    else
+                    {
+                        bar.Markers = null;
+                        bar.TodayMarkerIndex = -1;
+                    }
 
                     // No warning glyph here: this caption is the reset time, not a percentage,
                     // so a "⚠" in front of it would read as a problem with the reset. The bar
@@ -1477,38 +1604,104 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private static bool IsWeeklyLimit(string kind) => kind is "weekly_all" or "seven_day";
 
     /// <summary>
-    /// One marker per workday boundary in Claude's rolling 7-day window, spanning the whole
-    /// window - days still ahead included - on the same "spend it within your work week"
-    /// reading as Copilot's My Pace; see <see cref="WeekMarkers"/>, including why the very
-    /// last boundary is skipped. The window itself is not Monday-anchored (it starts
-    /// whenever the account last reset), so workdays here are calendar-agnostic: the
-    /// configured count of equal slices from window start, not real Mon-Fri weekdays -
-    /// someone at a 5-day-a-week job reads the bar as "gone in 5 workdays" regardless of
-    /// which weekday the window happens to start on.
+    /// Builds markers for Claude's rolling 7-day window, spanning the whole window - days
+    /// still ahead included - on the same "spend it within your work week" reading as
+    /// Copilot's My Pace; see <see cref="WeekMarkers"/>. Unlike that grid, this one carries
+    /// no workday count: Claude's window is calendar days, not a configurable work week, so
+    /// every local midnight inside the window gets a tick regardless of weekday.
+    ///
+    /// The window resets at whatever clock time the account last reset at, not at midnight,
+    /// so it is not made of seven equal 24h days - the first and last days are clipped to
+    /// however much of them actually falls inside the window (e.g. a window ending Saturday
+    /// 18:00 has an 18-hour last day, not a 24-hour one). Ticks are therefore placed at real
+    /// local midnights clamped to the window, not at equal i/7 fractions. "Today" is not one
+    /// of those midnight ticks either: it is "now"'s own true fractional position, inserted
+    /// into the sorted list, so the segment between it and the next boundary shrinks to
+    /// reflect the real time left before that boundary (typically the next midnight, or the
+    /// window's own end on the final day).
     /// </summary>
-    private static IReadOnlyList<double>? RollingWeekMarkers(int workDaysPerWeek)
+    private static (IReadOnlyList<double>? Markers, int TodayIndex) RollingWeekTodayMarkers(
+        DateTimeOffset? resetsAt)
     {
-        var count = workDaysPerWeek - 1;
-        if (count <= 0) return null;
+        if (resetsAt is not { } reset) return (null, -1);
 
-        var markers = new double[count];
-        for (var i = 0; i < count; i++)
-            markers[i] = (double)(i + 1) / workDaysPerWeek;
-        return markers;
+        var end = reset.ToLocalTime();
+
+        // Seven days back measured as a real elapsed duration, then converted to whatever
+        // local offset actually applied at that instant. DateTimeOffset.AddDays carries the
+        // *end* offset backwards unchanged, so across a DST transition it lands an hour off
+        // the true window start: a window ending 28 Oct 12:00 CET (+01:00) got a start of
+        // 21 Oct 12:00+01:00, an instant whose real wall clock was 13:00 CEST (+02:00). That
+        // skewed every fraction below and, because the first midnight is filtered on
+        // "> start", silently dropped one whole day separator off the bar.
+        var startUtc = end.UtcDateTime.AddDays(-7);
+        var start = TimeZoneInfo.ConvertTime(new DateTimeOffset(startUtc, TimeSpan.Zero), TimeZoneInfo.Local);
+
+        var span = (end - start).Ticks;
+        if (span <= 0) return (null, -1);
+
+        // Local midnights strictly inside (start, end) - the endpoints are the bar's own
+        // edges already and need no tick of their own.
+        //
+        // Each midnight is rebuilt from its own calendar date with that date's own offset,
+        // rather than by repeatedly adding 24h: the day a DST transition falls on is 23 or
+        // 25 hours long, so stepping by a fixed day would drift the ticks off midnight for
+        // the rest of the window.
+        var ticks = new List<double>();
+        for (var day = start.Date.AddDays(1); day < end.DateTime.AddDays(1); day = day.AddDays(1))
+        {
+            var midnight = LocalMidnight(day);
+            if (midnight <= start) continue;
+            if (midnight >= end) break;
+
+            ticks.Add((midnight - start).Ticks / (double)span);
+        }
+
+        var now = DateTimeOffset.Now;
+        var nowFraction = Math.Clamp((now - start).Ticks / (double)span, 0, 1);
+
+        var todayIndex = 0;
+        while (todayIndex < ticks.Count && ticks[todayIndex] < nowFraction) todayIndex++;
+
+        // A poll landing exactly on a midnight boundary - reachable, since the timer fires
+        // every few minutes - already has a tick at this fraction. Inserting "now" as well
+        // would stack a muted separator underneath the accent one and draw the window with
+        // one day-divider more than it has, so that midnight simply becomes today's marker.
+        if (todayIndex < ticks.Count && ticks[todayIndex] == nowFraction)
+            return (ticks, todayIndex);
+
+        ticks.Insert(todayIndex, nowFraction);
+        return (ticks, todayIndex);
     }
 
     /// <summary>
-    /// The 0-based index into <see cref="RollingWeekMarkers"/> that is "today" - which of
-    /// the equal work-day slices from window start "now" falls in.
+    /// Midnight at the start of <paramref name="date"/>, carrying the UTC offset that
+    /// actually applies on that date rather than one inherited from another day.
+    ///
+    /// On the day a DST transition lands, local midnight may not exist at all (spring
+    /// forward in zones that shift at 00:00, e.g. some of South America): TimeZoneInfo
+    /// reports such a time as invalid, and the first valid instant of that day is what the
+    /// bar should tick at instead.
     /// </summary>
-    private static int RollingWeekTodayIndex(DateTimeOffset? resetsAt, int workDaysPerWeek)
+    private static DateTimeOffset LocalMidnight(DateTime date)
     {
-        if (resetsAt is not { } reset || workDaysPerWeek <= 0) return -1;
+        var tz = TimeZoneInfo.Local;
+        var midnight = date.Date;
 
-        var start = reset.AddDays(-7);
-        var slice = TimeSpan.FromDays(7.0 / workDaysPerWeek);
-        var elapsed = DateTimeOffset.UtcNow - start;
-        return Math.Clamp((int)(elapsed.Ticks / slice.Ticks), 0, workDaysPerWeek - 1);
+        if (tz.IsInvalidTime(midnight))
+        {
+            // Skipped-over local time: walk forward to the first minute that exists.
+            for (var i = 1; i <= 180; i++)
+            {
+                var candidate = midnight.AddMinutes(i);
+                if (!tz.IsInvalidTime(candidate))
+                    return new DateTimeOffset(candidate, tz.GetUtcOffset(candidate));
+            }
+        }
+
+        // An ambiguous local time (autumn fall-back) resolves to the earlier of the two
+        // instants, which GetUtcOffset already returns - the standard-time one.
+        return new DateTimeOffset(midnight, tz.GetUtcOffset(midnight));
     }
 
     /// <summary>
@@ -1519,6 +1712,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         if (_signInRunning) return;
         _signInRunning = true;
+
+        // Linked so either the app shutting down or a sign-out can end the poll.
+        using var signInCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        _signInCts = signInCts;
+        ct = signInCts.Token;
+
         try
         {
             var auth = new GitHubDeviceAuth();
@@ -1530,6 +1729,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
             TryOpenBrowser(code.VerificationUri);
 
             var token = await auth.PollForTokenAsync(code, ct).ConfigureAwait(true);
+
+            // Cancelled by a sign-out (or app shutdown) rather than declined at GitHub's end:
+            // the sign-out has its own message and its own refresh in flight, so saying
+            // "cancelled or timed out" over the top of it would only confuse.
+            ct.ThrowIfCancellationRequested();
+
             if (string.IsNullOrWhiteSpace(token))
             {
                 SignInText = "Sign in to GitHub";
@@ -1562,6 +1767,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         finally
         {
             _signInRunning = false;
+            _signInCts = null;
         }
     }
 
@@ -1637,6 +1843,53 @@ public sealed class MainViewModel : INotifyPropertyChanged
         // had signed out while a live refresh token sat on disk, so the panel says otherwise.
         if (!cleared)
             ClaudeSubtitle = "sign-out failed - the token file could not be deleted";
+    }
+
+    /// <summary>What the panel says while a sign-out has left a token behind on disk.</summary>
+    private const string SignOutFailedText = "sign-out failed - the token file could not be deleted";
+
+    /// <summary>
+    /// Discards this app's own Copilot device-flow token - the Copilot analogue of
+    /// <see cref="SignOutOfClaudeAsync"/>. Only ever offered while the panel is actually
+    /// running on it (see <see cref="CopilotSignOutVisible"/>).
+    ///
+    /// This is deliberately narrower than "sign out of Copilot": an env var or a `gh` CLI
+    /// session are two other sources GetTokenAsync checks first, and this app has no way to
+    /// sign either of those out - clearing this file will not change what the panel shows if
+    /// either is still live, and CopilotSourceNote is what explains that when it happens.
+    /// </summary>
+    public async Task SignOutOfGitHubAsync(CancellationToken ct = default)
+    {
+        // Stop a device-flow sign-in that is mid-poll before touching the file. That flow
+        // ends by writing a fresh token, so leaving it running would let it quietly reinstate
+        // the sign-in seconds after the user asked to leave.
+        _signInCts?.Cancel();
+        _signInRunning = false;
+        SignInText = "Sign in to GitHub";
+        SignInCode = "";
+
+        var cleared = GitHubDeviceAuth.ClearToken();
+        _copilot.InvalidateToken();
+
+        _copilotFound = false;
+        _pacingFound = false;
+
+        try
+        {
+            await RefreshCopilotAsync(ct, force: true).ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        // Recorded rather than written straight to the subtitle: the refresh above has just
+        // set that from whatever the poll found, and the next timer tick would set it again,
+        // erasing the one warning that the sign-out did not take. The flag is what keeps it
+        // on screen until the file is actually gone - see _copilotSignOutFailed.
+        _copilotSignOutFailed = !cleared;
+        if (!cleared)
+            CopilotSubtitle = SignOutFailedText;
     }
 
     /// <summary>
@@ -1756,7 +2009,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
         bar.IsUnlimited = false;
         bar.Markers = null;
         bar.TodayMarkerIndex = -1;
-        bar.MarkersResetsAt = null;
     }
 
     /// <summary>
@@ -1781,7 +2033,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         while (bars.Count > count) bars.RemoveAt(bars.Count - 1);
     }
 
-    private async Task RefreshCopilotAsync(CancellationToken ct)
+    private async Task RefreshCopilotAsync(CancellationToken ct, bool force = false)
     {
         // A device-code sign-in is showing the code and polling GitHub for approval; this
         // is a background timer tick that runs concurrently with it (see RefreshAsync's
@@ -1794,7 +2046,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
         // ScheduleRetryIfNothingFound afterwards, which would otherwise score this poll on
         // figures no longer being maintained. Same reasoning as RefreshClaudeAsync's own
         // skip path.
-        if (_signInRunning)
+        // force bypasses this: a sign-out cancels the in-flight sign-in and then has to see
+        // the result of its own token deletion. Without the bypass the refresh returned
+        // immediately, leaving the stale bars and a "Sign out of GitHub" item on screen for
+        // a token that no longer exists.
+        if (_signInRunning && !force)
         {
             _copilotFound = CopilotAvailable;
             _pacingFound = PacingAvailable;
@@ -1814,6 +2070,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
             SignInCode = "";
             _copilotReset = "";
             PacingAvailable = false;
+
+            // Nothing answered, so nothing is stored under this app's own name either -
+            // even if the file is still on disk (a failed "Sign out" - see
+            // SignOutOfGitHubAsync), there is no live data behind it right now.
+            SetCopilotTokenSource(Models.CopilotTokenSource.None);
             // Not status.NeedsSignIn: the panel stays visible so the sign-in button has
             // somewhere to live, but there is still no actual quota data behind it, so this
             // poll found nothing for the retry back-off's purposes either way.
@@ -1829,13 +2090,28 @@ public sealed class MainViewModel : INotifyPropertyChanged
         CopilotAvailable = true;
         _copilotFound = true;
 
+        SetCopilotTokenSource(status.TokenSource);
+
         // On a work machine the plan is org-assigned, so show which org grants it as well
         // as the plan tier; on a personal account there is no org and the tier stands alone.
         var plan = status.Organizations.Count > 0
             ? $"{status.Organizations[0]} · {status.Plan}"
             : status.Plan;
         _copilotReset = status.ResetDate is { } d ? $"resets {d:MMM d}" : "";
-        CopilotSubtitle = AppendReset(plan);
+
+        // A failed sign-out outranks the plan name until it is actually resolved: the file is
+        // re-checked every poll, so the warning clears itself the moment the token really is
+        // gone (the user deleted it by hand, or a later sign-out succeeded).
+        if (_copilotSignOutFailed && GitHubDeviceAuth.HasStoredToken)
+        {
+            CopilotSubtitle = SignOutFailedText;
+        }
+        else
+        {
+            _copilotSignOutFailed = false;
+            CopilotSubtitle = AppendReset(plan);
+        }
+
         UpdatePacingSubtitle();
 
         for (int i = 0; i < CopilotBars.Count; i++)
@@ -2464,7 +2740,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         // binds to: a hidden panel contributes nothing, and a solo panel is expanded even
         // when its stored preference says collapsed.
         if (ClaudeVisible && ClaudeBarsVisible) widest = Widest(ClaudeBars, widest);
-        if (CopilotVisible && CopilotExpanded) widest = Widest(CopilotBars, widest);
+        if (CopilotVisible && CopilotBarsVisible) widest = Widest(CopilotBars, widest);
         if (PacingVisible && PacingExpanded) widest = Widest(PacingBars, widest);
 
         // Padding to the right of the text, plus a floor so a single short label does not

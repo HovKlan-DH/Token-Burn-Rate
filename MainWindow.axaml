@@ -197,6 +197,12 @@
           <MenuItem Name="ClaudeSignOutItem" Header="Sign out of Claude"
                     IsVisible="{Binding ClaudeSignOutVisible}"
                     ToolTip.Tip="Forget the Claude sign-in stored by this widget"/>
+          <!-- Only shown while the panel is running on this app's own device-flow token -
+               not on an env var or a `gh` CLI session, which this command has no power over
+               (see CopilotSourceNote, shown in the panel when either of those is in play). -->
+          <MenuItem Name="CopilotSignOutItem" Header="Sign out of GitHub"
+                    IsVisible="{Binding CopilotSignOutVisible}"
+                    ToolTip.Tip="Forget the GitHub sign-in stored by this widget"/>
           <MenuItem Name="OpenFolderItem" Header="Open application folder"
                     ToolTip.Tip="Open the folder holding the executable"/>
           <!-- Only shown when it differs from the application folder - a Velopack install
@@ -333,28 +339,41 @@
                      HorizontalAlignment="Right" VerticalAlignment="Center" Margin="8,0,0,0"
                      MaxWidth="200"/>
         </Grid>
-        <ItemsControl ItemsSource="{Binding CopilotBars}" IsVisible="{Binding CopilotExpanded}"
+        <!-- Explains where the data actually came from whenever it is not this app's own
+             sign-in - empty and so invisible the rest of the time. Its own row rather than
+             folded into CopilotSubtitle above: that string is already a truncated
+             plan/org/reset composite at MaxWidth 200, with no room left for this without
+             clipping one of the two. -->
+        <TextBlock Text="{Binding CopilotSourceNote}" Classes="subtitle" FontSize="9"
+                   IsVisible="{Binding CopilotSourceNoteVisible}"/>
+        <ItemsControl ItemsSource="{Binding CopilotBars}" IsVisible="{Binding CopilotBarsVisible}"
                       ItemTemplate="{StaticResource BarTemplate}"/>
 
-        <!-- Shown only when a sign-in would fix the panel; uses the GitHub device flow,
-             so no CLI install and no admin rights are required. -->
-        <Button Name="SignInButton"
-                IsVisible="{Binding CopilotNeedsSignIn}"
-                HorizontalAlignment="Stretch"
-                HorizontalContentAlignment="Center"
-                Padding="0,5" FontSize="10"
-                Background="#1F6FEB" Foreground="White"
-                BorderThickness="0" CornerRadius="4" Cursor="Hand"
-                ToolTip.Tip="Click to copy the code">
-          <TextBlock TextAlignment="Center">
-            <!-- Mode=OneWay is required on both Runs: Run.Text defaults to TwoWay in
-                 Avalonia, and TwoWay plus StringFormat is a known infinite-loop trap
-                 (writes the formatted string back to the source, which reformats it,
-                 forever) - see https://github.com/AvaloniaUI/Avalonia/issues/18737. -->
-            <Run Text="{Binding SignInText, Mode=OneWay}" FontWeight="Normal"/>
-            <Run Text="{Binding SignInCode, Mode=OneWay, StringFormat=' {0}'}" FontWeight="Bold" Foreground="White"/>
-          </TextBlock>
-        </Button>
+        <!-- Shown only when a sign-in would fix the panel, in place of the bars rather than
+             above a row of "n/a" placeholders - the same explainer-instead-of-bars split the
+             Claude panel uses (see ClaudeInstallHintVisible). -->
+        <StackPanel Spacing="6" IsVisible="{Binding CopilotSignInHintVisible}">
+          <TextBlock Text="{Binding CopilotExplainerText}"
+                     Classes="subtitle" TextWrapping="Wrap" FontSize="11"/>
+          <!-- Uses the GitHub device flow, so no CLI install and no admin rights are
+               required. -->
+          <Button Name="SignInButton"
+                  HorizontalAlignment="Stretch"
+                  HorizontalContentAlignment="Center"
+                  Padding="0,5" FontSize="10"
+                  Background="#1F6FEB" Foreground="White"
+                  BorderThickness="0" CornerRadius="4" Cursor="Hand"
+                  ToolTip.Tip="Click to copy the code">
+            <TextBlock TextAlignment="Center">
+              <!-- Mode=OneWay is required on both Runs: Run.Text defaults to TwoWay in
+                   Avalonia, and TwoWay plus StringFormat is a known infinite-loop trap
+                   (writes the formatted string back to the source, which reformats it,
+                   forever) - see https://github.com/AvaloniaUI/Avalonia/issues/18737. -->
+              <Run Text="{Binding SignInText, Mode=OneWay}" FontWeight="Normal"/>
+              <Run Text="{Binding SignInCode, Mode=OneWay, StringFormat=' {0}'}" FontWeight="Bold" Foreground="White"/>
+            </TextBlock>
+          </Button>
+        </StackPanel>
       </StackPanel>
 
       <!-- The user's own pacing view, derived from the credit balance above. -->

@@ -31,6 +31,14 @@ public sealed class CopilotUsageService
     private string? _cachedToken;
     private bool _usedStoredToken;
 
+    /// <summary>
+    /// Which of the three sources supplied <see cref="_cachedToken"/> - set alongside it in
+    /// GetTokenAsync, and stamped onto every CopilotStatus this service returns so the panel
+    /// can say why a token was found (or explain why "Sign out" did not change anything: it
+    /// only ever clears the third source, see GitHubDeviceAuth.ClearToken).
+    /// </summary>
+    private CopilotTokenSource _tokenSource = CopilotTokenSource.None;
+
     public CopilotUsageService(HttpClient? http = null)
     {
         _http = http ?? new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
@@ -38,8 +46,22 @@ public sealed class CopilotUsageService
         _http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
     }
 
-    /// <summary>Forgets any cached token so the next poll re-resolves it.</summary>
-    public void InvalidateToken() => _cachedToken = null;
+    /// <summary>
+    /// Forgets any cached token so the next poll re-resolves it.
+    ///
+    /// Clears the two facts derived from that token as well. Both are load-bearing now:
+    /// <see cref="_usedStoredToken"/> decides whether a 401 deletes this app's own token
+    /// file, and <see cref="_tokenSource"/> is what the panel reports as the origin of the
+    /// data. Leaving either behind lets a stale answer outlive the token it described - most
+    /// sharply right after a sign-in, where a 401 on the very first request could otherwise
+    /// delete the token that had just been saved.
+    /// </summary>
+    public void InvalidateToken()
+    {
+        _cachedToken = null;
+        _usedStoredToken = false;
+        _tokenSource = CopilotTokenSource.None;
+    }
 
     public async Task<CopilotStatus> GetStatusAsync(CancellationToken ct = default)
     {
@@ -65,18 +87,30 @@ public sealed class CopilotUsageService
             if (resp.StatusCode == System.Net.HttpStatusCode.Unauthorized)
             {
                 // A stored token that GitHub no longer accepts: drop it and ask again.
+                // Only ever clears the device-flow file - a rejected env-var or `gh` token
+                // is left exactly where it came from, since this app does not own either.
                 _cachedToken = null;
                 if (_usedStoredToken) GitHubDeviceAuth.ClearToken();
                 return new CopilotStatus { Error = "Sign-in expired", NeedsSignIn = true };
             }
             if (!resp.IsSuccessStatusCode)
             {
+                // The source is still worth reporting: the token resolved fine, GitHub just
+                // did not answer, and dropping the note would make the panel look as though
+                // it had changed where it was reading from.
+                var source = _tokenSource;
                 _cachedToken = null; // force a refresh next time
-                return new CopilotStatus { Error = $"GitHub returned {(int)resp.StatusCode}" };
+                return new CopilotStatus
+                {
+                    Error = $"GitHub returned {(int)resp.StatusCode}",
+                    TokenSource = source,
+                };
             }
 
             var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-            return Parse(json);
+            var status = Parse(json);
+            status.TokenSource = _tokenSource;
+            return status;
         }
         catch (OperationCanceledException)
         {
@@ -84,7 +118,7 @@ public sealed class CopilotUsageService
         }
         catch (Exception ex)
         {
-            return new CopilotStatus { Error = ex.Message };
+            return new CopilotStatus { Error = ex.Message, TokenSource = _tokenSource };
         }
     }
 
@@ -152,6 +186,7 @@ public sealed class CopilotUsageService
             if (!string.IsNullOrWhiteSpace(v))
             {
                 _usedStoredToken = false;
+                _tokenSource = CopilotTokenSource.EnvironmentVariable;
                 return _cachedToken = v.Trim();
             }
         }
@@ -161,6 +196,7 @@ public sealed class CopilotUsageService
         if (!string.IsNullOrWhiteSpace(cli))
         {
             _usedStoredToken = false;
+            _tokenSource = CopilotTokenSource.GitHubCli;
             return _cachedToken = cli;
         }
 
@@ -169,9 +205,11 @@ public sealed class CopilotUsageService
         if (!string.IsNullOrWhiteSpace(stored))
         {
             _usedStoredToken = true;
+            _tokenSource = CopilotTokenSource.OwnSignIn;
             return _cachedToken = stored;
         }
 
+        _tokenSource = CopilotTokenSource.None;
         return null;
     }
 
