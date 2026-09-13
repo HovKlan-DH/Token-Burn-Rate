@@ -28,15 +28,10 @@ public sealed class CopilotQuota
 
 /// <summary>
 /// Which of the three independent places <see cref="CopilotUsageService"/> can get a token
-/// from actually supplied the one behind the current status.
-///
-/// This exists because "signed out" is not one state for Copilot the way it now is for
-/// Claude: an env var, a live `gh` CLI session, and this app's own device-flow token are all
-/// checked in turn, and any one of them being live is enough to show real data. A user who
-/// deletes this app's own token file (or clicks "Sign out of GitHub") but is still logged
-/// into `gh` on the same machine will keep seeing their account - correctly, since a signed-in
-/// `gh` really does mean signed-in-to-Copilot - but with no explanation that this app's own
-/// sign-out only ever touches the third source.
+/// from actually supplied the one behind the current status. Logged rather than shown: an
+/// env var, a live `gh` CLI session, and this app's own device-flow token are all checked in
+/// turn, and any one of them being live is enough to show real data - so which one answered
+/// only ever matters when working out why the panel shows what it does.
 /// </summary>
 public enum CopilotTokenSource
 {
@@ -59,8 +54,6 @@ public sealed class CopilotStatus
     public string? Error { get; set; }
     /// <summary>True when the fix is an interactive sign-in rather than a transient failure.</summary>
     public bool NeedsSignIn { get; set; }
-    /// <summary>Which source the token behind this result came from - see <see cref="CopilotTokenSource"/>.</summary>
-    public CopilotTokenSource TokenSource { get; set; }
     public bool IsAvailable => Error is null && Quotas.Count > 0;
 }
 
@@ -161,25 +154,13 @@ public sealed class ClaudeLimitsStatus
     /// </summary>
     public bool CanSignIn { get; init; }
 
-    /// <summary>
-    /// Whether a Claude sign-in of this app's own is stored on this machine - what the
-    /// context menu's "Sign out of Claude" acts on.
-    ///
-    /// Reported here rather than re-read from the token store by the view model: answering
-    /// it means a file read, a DPAPI decrypt and a JSON parse, and the service has just done
-    /// all three to build this status. Asking again on every poll would put that work on the
-    /// UI thread purely to decide whether one menu item is visible.
-    /// </summary>
-    public bool HasStoredSignIn { get; set; }
-
     public static ClaudeLimitsStatus Unavailable(
-        string error, bool transient = false, bool canSignIn = false, bool hasStoredSignIn = false) =>
+        string error, bool transient = false, bool canSignIn = false) =>
         new()
         {
             Error = error,
             IsTransientFailure = transient,
             CanSignIn = canSignIn,
-            HasStoredSignIn = hasStoredSignIn,
         };
 }
 

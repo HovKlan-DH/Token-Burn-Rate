@@ -596,21 +596,19 @@ public static class ClaudeTokenStore
     }
 
     /// <summary>
-    /// Deletes the stored tokens. Returns whether the file is actually gone afterwards, so
-    /// an interactive sign-out can tell the user the truth rather than reporting success
-    /// over a file that is locked or read-only and still holds a live refresh token.
+    /// Deletes the stored tokens. Never throws: the only caller is a refused grant dropping
+    /// credentials Anthropic has already rejected, and a file that is locked or read-only
+    /// holds a refresh token that is dead at Anthropic's end either way.
     /// </summary>
-    public static bool Clear()
+    public static void Clear()
     {
         try
         {
             var path = TokenPath;
             if (File.Exists(path)) File.Delete(path);
-            return !File.Exists(path);
         }
         catch (Exception)
         {
-            return false;
         }
     }
 

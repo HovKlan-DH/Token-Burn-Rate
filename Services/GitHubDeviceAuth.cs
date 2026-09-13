@@ -152,20 +152,6 @@ public sealed class GitHubDeviceAuth
         }
     }
 
-    /// <summary>
-    /// Whether a token file of this app's own is present. Used to re-check a failed sign-out
-    /// on later polls, so the warning clears itself once the file really is gone rather than
-    /// persisting on a flag nothing revisits.
-    /// </summary>
-    public static bool HasStoredToken
-    {
-        get
-        {
-            try { return File.Exists(TokenPath); }
-            catch (Exception) { return false; }
-        }
-    }
-
     public static string? LoadToken()
     {
         try
@@ -189,22 +175,19 @@ public sealed class GitHubDeviceAuth
     }
 
     /// <summary>
-    /// Deletes the stored token. Returns whether the file is actually gone afterwards, so an
-    /// interactive sign-out can tell the user the truth rather than reporting success over a
-    /// file that is locked or read-only and still holds a live token - the same contract
-    /// <see cref="ClaudeTokenStore.Clear"/> makes for the Claude sign-in.
+    /// Deletes the stored token. Never throws: the only caller is a 401 handler dropping a
+    /// token GitHub has already rejected, and a file that is locked or read-only leaves a
+    /// token that is dead at GitHub's end either way.
     /// </summary>
-    public static bool ClearToken()
+    public static void ClearToken()
     {
         try
         {
             var path = TokenPath;
             if (File.Exists(path)) File.Delete(path);
-            return !File.Exists(path);
         }
         catch (Exception)
         {
-            return false;
         }
     }
 

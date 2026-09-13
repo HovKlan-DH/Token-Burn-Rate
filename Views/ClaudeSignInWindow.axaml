@@ -45,7 +45,7 @@
          user should be able to tell the difference without taking our word for it, so the
          text points at where the browser will land and what the grant can do. -->
     <TextBlock Classes="body"
-               Text="You need to login to Claude and authorize this application to read your Claude usage. It opens claude.ai in your browser - your password is never seen by this app."/>
+               Text="You need to login to Claude and authorize this application to read your Claude usage. It opens claude.ai in your browser - your password is never seen by this application."/>
 
     <Border Background="#26282D" CornerRadius="4" Padding="12">
       <StackPanel Spacing="8">

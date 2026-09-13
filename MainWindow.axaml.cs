@@ -119,9 +119,6 @@ public partial class MainWindow : Window
         if (this.FindControl<MenuItem>("OpenConfigFolderItem") is { } openConfigFolder)
             openConfigFolder.Click += (_, _) => _vm.OpenConfigurationFolder();
 
-        if (this.FindControl<MenuItem>("OpenLogFileItem") is { } openLogFile)
-            openLogFile.Click += (_, _) => _vm.OpenLogFile();
-
         if (this.FindControl<MenuItem>("ProjectPageItem") is { } projectPage)
             projectPage.Click += (_, _) => _vm.OpenProjectPage();
 
@@ -173,20 +170,6 @@ public partial class MainWindow : Window
                     () => Views.ClaudeSignInWindow.SignInAsync(this), _cts.Token);
                 UpdateTrayIcon();
             }, "Claude sign-in button");
-
-        if (this.FindControl<MenuItem>("ClaudeSignOutItem") is { } claudeSignOut)
-            claudeSignOut.Click += (_, _) => RunSafely(async () =>
-            {
-                await _vm.SignOutOfClaudeAsync(_cts.Token);
-                UpdateTrayIcon();
-            }, "Claude sign-out");
-
-        if (this.FindControl<MenuItem>("CopilotSignOutItem") is { } copilotSignOut)
-            copilotSignOut.Click += (_, _) => RunSafely(async () =>
-            {
-                await _vm.SignOutOfGitHubAsync(_cts.Token);
-                UpdateTrayIcon();
-            }, "GitHub sign-out");
 
         // Clicking a section header collapses or expands that panel.
         HookHeader("ClaudeHeader", () => _vm.ClaudeSolo, () => _vm.ClaudeCollapsed = !_vm.ClaudeCollapsed);

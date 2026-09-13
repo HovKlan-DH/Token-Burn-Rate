@@ -218,13 +218,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// </summary>
     private bool _claudeCanSignIn;
 
-    /// <summary>
-    /// Whether the Claude figures on screen came from this app's own sign-in rather than
-    /// from Claude Code's credentials file. Only this case offers "Sign out of Claude" -
-    /// there is nothing for that command to do about a token the CLI owns.
-    /// </summary>
-    private bool _claudeUsingOwnLogin;
-
     /// <summary>Re-entry guard for the sign-in dialog, which is modal but launched from two places.</summary>
     private bool _claudeSignInRunning;
 
@@ -264,30 +257,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private bool _signInRunning;
 
     /// <summary>
-    /// Cancels the device-flow sign-in that is currently polling GitHub for approval, if
-    /// any. Signing out while a sign-in is in flight has to stop it: the flow ends by
-    /// writing a fresh token to disk, which would silently undo the sign-out that happened
-    /// moments earlier.
+    /// When the device code currently on screen stops being usable. The sign-in guard is
+    /// scoped to this rather than to <see cref="_signInRunning"/> alone: the flow polls
+    /// GitHub for the code's full lifetime (15 minutes by default) and nothing can cancel it,
+    /// so a user who starts a sign-in and walks away would otherwise freeze the Copilot panel
+    /// for that whole window - every refresh short-circuiting to protect a code that expired
+    /// minutes ago.
     /// </summary>
-    private CancellationTokenSource? _signInCts;
-
-    /// <summary>
-    /// Set when "Sign out of GitHub" could not delete the token file - a locked or read-only
-    /// profile. It survives subsequent polls, because the warning must not be quietly
-    /// replaced by the next healthy plan/org subtitle: another source may be answering while
-    /// a token this app still owns sits on disk, and the user believes they signed out.
-    /// Cleared as soon as a poll finds the file actually gone.
-    /// </summary>
-    private bool _copilotSignOutFailed;
-
-    /// <summary>
-    /// Whether the Copilot data on screen came from this app's own device-flow sign-in, as
-    /// opposed to an environment variable or a `gh` CLI session it merely noticed - see
-    /// <see cref="Models.CopilotTokenSource"/>. Only this case offers "Sign out of GitHub" in
-    /// the context menu, the same way <c>_claudeUsingOwnLogin</c> gates Claude's sign-out:
-    /// there is nothing for that command to do about a token this app does not own.
-    /// </summary>
-    private bool _copilotUsingOwnSignIn;
+    private DateTimeOffset _signInCodeExpiry;
 
     private bool _pacingVisible;
     private string _pacingSubtitle = "";
@@ -569,21 +546,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public bool ClaudeSignInVisible => _claudeCanSignIn;
 
     /// <summary>
-    /// Whether "Sign out of Claude" should appear in the context menu - only when there is
-    /// a stored sign-in to forget.
-    /// </summary>
-    public bool ClaudeSignOutVisible { get => _claudeUsingOwnLogin; }
-
-    /// <summary>
-    /// Announces the panel's two sign-in affordances together - the in-panel button and the
-    /// context menu's sign-out - so a caller that changed one input cannot leave the other
-    /// stale on screen.
+    /// Announces the panel's sign-in affordance whenever the input behind it changes.
     /// </summary>
     private void ClaudeExplainerChanged()
     {
         OnPropertyChanged(nameof(ClaudeExplainerText));
         OnPropertyChanged(nameof(ClaudeSignInVisible));
-        OnPropertyChanged(nameof(ClaudeSignOutVisible));
     }
 
     /// <summary>
@@ -607,20 +575,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         OnPropertyChanged(nameof(CopilotBarsVisible));
         OnPropertyChanged(nameof(CopilotSignInHintVisible));
-    }
-
-    /// <summary>
-    /// Records whether the current Copilot token is this app's own, and announces whether
-    /// "Sign out of GitHub" applies. Which source it was otherwise is no longer kept here -
-    /// it used to feed a small panel caption explaining a `gh` CLI or env-var token, which
-    /// read as clutter next to the bars, and it now goes only to the log (see
-    /// CopilotUsageService) for debugging.
-    /// </summary>
-    private void SetCopilotTokenSource(Models.CopilotTokenSource source)
-    {
-        _copilotUsingOwnSignIn = source == Models.CopilotTokenSource.OwnSignIn;
-
-        OnPropertyChanged(nameof(CopilotSignOutVisible));
     }
 
     public bool CopilotAvailable
@@ -666,16 +620,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// <summary>What the panel says in place of its bars while signed out.</summary>
     public string CopilotExplainerText =>
         "Sign in to see your GitHub Copilot usage here. This is a one-time sign-in for this machine.";
-
-    /// <summary>
-    /// Whether "Sign out of GitHub" should appear in the context menu - only when there is a
-    /// sign-in of this app's own to revoke, the Copilot analogue of ClaudeSignOutVisible.
-    /// Deliberately not offered for the `gh` CLI or environment-variable sources: this app
-    /// has no token of its own to forget in either case, and the command would do nothing.
-    /// Which of the three sources is actually in play is logged (see
-    /// CopilotUsageService/AppLog) rather than shown in the panel.
-    /// </summary>
-    public bool CopilotSignOutVisible => _copilotUsingOwnSignIn;
 
     public string SignInText { get => _signInText; set => Set(ref _signInText, value); }
     /// <summary>
@@ -1443,12 +1387,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
             // would otherwise put a sign-in button under figures still on screen.
             _claudeCanSignIn = !limits.IsAvailable && limits.CanSignIn;
 
-            // Reported by the service, which has just read the token store to make this
-            // call - see ClaudeLimitsStatus.HasStoredSignIn. Re-reading it here would put a
-            // file read and a DPAPI decrypt on the UI thread on every single poll, to decide
-            // whether one context-menu item is visible.
-            _claudeUsingOwnLogin = limits.HasStoredSignIn;
-
             ClaudeExplainerChanged();
 
             // Bars already on screen are worth more than an explainer standing where they
@@ -1700,27 +1638,18 @@ public sealed class MainViewModel : INotifyPropertyChanged
         if (_signInRunning) return;
         _signInRunning = true;
 
-        // Linked so either the app shutting down or a sign-out can end the poll.
-        using var signInCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        _signInCts = signInCts;
-        ct = signInCts.Token;
-
         try
         {
             var auth = new GitHubDeviceAuth();
             var code = await auth.RequestCodeAsync(ct).ConfigureAwait(true);
 
+            _signInCodeExpiry = DateTimeOffset.UtcNow.AddSeconds(code.ExpiresIn);
             SignInText = "Code:";
             SignInCode = code.UserCode;
             CopilotSubtitle = "waiting for browser approval…";
             TryOpenBrowser(code.VerificationUri);
 
             var token = await auth.PollForTokenAsync(code, ct).ConfigureAwait(true);
-
-            // Cancelled by a sign-out (or app shutdown) rather than declined at GitHub's end:
-            // the sign-out has its own message and its own refresh in flight, so saying
-            // "cancelled or timed out" over the top of it would only confuse.
-            ct.ThrowIfCancellationRequested();
 
             if (string.IsNullOrWhiteSpace(token))
             {
@@ -1757,7 +1686,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
         finally
         {
             _signInRunning = false;
-            _signInCts = null;
         }
     }
 
@@ -1809,90 +1737,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
     }
 
     /// <summary>
-    /// Discards this app's own Claude tokens. Only ever offered while the panel is actually
-    /// running on them (see <see cref="ClaudeSignOutVisible"/>), so it cannot be mistaken
-    /// for a way to sign the machine's Claude Code out.
-    ///
-    /// This clears the local copy; it does not revoke the grant at Anthropic's end, which
-    /// only the account page can do. That is the same boundary the GitHub token has.
-    /// </summary>
-    public async Task SignOutOfClaudeAsync(CancellationToken ct = default)
-    {
-        var cleared = ClaudeTokenStore.Clear();
-        AppLog.Info(cleared ? "Claude: signed out, token file cleared" : "Claude: sign-out could not delete the token file");
-
-        _claudeHasPolled = false;       // nothing polled with the new (absent) credentials
-        _claudeSkipUntil = null;
-
-        // No _claudeUsingOwnLogin / ClaudeExplainerChanged here: the forced refresh below
-        // sets both from what is actually on disk now, so doing it twice would only raise a
-        // duplicate notification - and would claim the token was gone before checking.
-        try
-        {
-            await RefreshClaudeAsync(ct, force: true).ConfigureAwait(true);
-        }
-        catch (OperationCanceledException)
-        {
-            return;
-        }
-
-        // Deleting can fail - a locked or read-only file - and Clear() cannot throw without
-        // taking the menu click with it. Saying nothing would leave the user believing they
-        // had signed out while a live refresh token sat on disk, so the panel says otherwise.
-        if (!cleared)
-            ClaudeSubtitle = "sign-out failed - the token file could not be deleted";
-    }
-
-    /// <summary>What the panel says while a sign-out has left a token behind on disk.</summary>
-    private const string SignOutFailedText = "sign-out failed - the token file could not be deleted";
-
-    /// <summary>
-    /// Discards this app's own Copilot device-flow token - the Copilot analogue of
-    /// <see cref="SignOutOfClaudeAsync"/>. Only ever offered while the panel is actually
-    /// running on it (see <see cref="CopilotSignOutVisible"/>).
-    ///
-    /// This is deliberately narrower than "sign out of Copilot": an env var or a `gh` CLI
-    /// session are two other sources GetTokenAsync checks first, and this app has no way to
-    /// sign either of those out - clearing this file will not change what the panel shows if
-    /// either is still live; the log line CopilotUsageService writes on each poll is what
-    /// explains that when it happens.
-    /// </summary>
-    public async Task SignOutOfGitHubAsync(CancellationToken ct = default)
-    {
-        // Stop a device-flow sign-in that is mid-poll before touching the file. That flow
-        // ends by writing a fresh token, so leaving it running would let it quietly reinstate
-        // the sign-in seconds after the user asked to leave.
-        _signInCts?.Cancel();
-        _signInRunning = false;
-        SignInText = "Sign in to GitHub";
-        SignInCode = "";
-
-        var cleared = GitHubDeviceAuth.ClearToken();
-        AppLog.Info(cleared ? "GitHub: signed out, token file cleared" : "GitHub: sign-out could not delete the token file");
-        _copilot.InvalidateToken();
-
-        _copilotFound = false;
-        _pacingFound = false;
-
-        try
-        {
-            await RefreshCopilotAsync(ct, force: true).ConfigureAwait(true);
-        }
-        catch (OperationCanceledException)
-        {
-            return;
-        }
-
-        // Recorded rather than written straight to the subtitle: the refresh above has just
-        // set that from whatever the poll found, and the next timer tick would set it again,
-        // erasing the one warning that the sign-out did not take. The flag is what keeps it
-        // on screen until the file is actually gone - see _copilotSignOutFailed.
-        _copilotSignOutFailed = !cleared;
-        if (!cleared)
-            CopilotSubtitle = SignOutFailedText;
-    }
-
-    /// <summary>
     /// The running build's version, shown as a non-interactive entry in the context menu
     /// now that the app updates itself silently (see Services/UpdateService.cs) - without
     /// this there was no on-screen way to tell which build was actually running.
@@ -1938,14 +1782,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// this must follow AppState's resolution rather than assuming beside-the-exe.
     /// </summary>
     public void OpenConfigurationFolder() => OpenFolder(ConfigurationFolder);
-
-    /// <summary>
-    /// Opens the running log file in whatever the OS treats a .log as - Notepad on Windows,
-    /// typically. Reuses <see cref="OpenFolder"/>'s ShellExecute call rather than a separate
-    /// helper: launching a file by its default handler is the same call as launching a
-    /// folder in Explorer, just given a different path.
-    /// </summary>
-    public void OpenLogFile() => OpenFolder(Services.AppLog.FilePath);
 
     /// <summary>The running executable's own folder.</summary>
     private static string? ApplicationFolder =>
@@ -2046,7 +1882,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         while (bars.Count > count) bars.RemoveAt(bars.Count - 1);
     }
 
-    private async Task RefreshCopilotAsync(CancellationToken ct, bool force = false)
+    private async Task RefreshCopilotAsync(CancellationToken ct)
     {
         // A device-code sign-in is showing the code and polling GitHub for approval; this
         // is a background timer tick that runs concurrently with it (see RefreshAsync's
@@ -2059,11 +1895,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
         // ScheduleRetryIfNothingFound afterwards, which would otherwise score this poll on
         // figures no longer being maintained. Same reasoning as RefreshClaudeAsync's own
         // skip path.
-        // force bypasses this: a sign-out cancels the in-flight sign-in and then has to see
-        // the result of its own token deletion. Without the bypass the refresh returned
-        // immediately, leaving the stale bars and a "Sign out of GitHub" item on screen for
-        // a token that no longer exists.
-        if (_signInRunning && !force)
+        //
+        // Bounded by the code's own expiry - see _signInCodeExpiry - so an abandoned sign-in
+        // stops holding the panel once there is no live code left to protect.
+        if (_signInRunning && DateTimeOffset.UtcNow < _signInCodeExpiry)
         {
             _copilotFound = CopilotAvailable;
             _pacingFound = PacingAvailable;
@@ -2084,10 +1919,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
             _copilotReset = "";
             PacingAvailable = false;
 
-            // Nothing answered, so nothing is stored under this app's own name either -
-            // even if the file is still on disk (a failed "Sign out" - see
-            // SignOutOfGitHubAsync), there is no live data behind it right now.
-            SetCopilotTokenSource(Models.CopilotTokenSource.None);
             // Not status.NeedsSignIn: the panel stays visible so the sign-in button has
             // somewhere to live, but there is still no actual quota data behind it, so this
             // poll found nothing for the retry back-off's purposes either way.
@@ -2103,8 +1934,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
         CopilotAvailable = true;
         _copilotFound = true;
 
-        SetCopilotTokenSource(status.TokenSource);
-
         // On a work machine the plan is org-assigned, so show which org grants it as well
         // as the plan tier; on a personal account there is no org and the tier stands alone.
         var plan = status.Organizations.Count > 0
@@ -2112,18 +1941,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             : status.Plan;
         _copilotReset = status.ResetDate is { } d ? $"resets {d:MMM d}" : "";
 
-        // A failed sign-out outranks the plan name until it is actually resolved: the file is
-        // re-checked every poll, so the warning clears itself the moment the token really is
-        // gone (the user deleted it by hand, or a later sign-out succeeded).
-        if (_copilotSignOutFailed && GitHubDeviceAuth.HasStoredToken)
-        {
-            CopilotSubtitle = SignOutFailedText;
-        }
-        else
-        {
-            _copilotSignOutFailed = false;
-            CopilotSubtitle = AppendReset(plan);
-        }
+        CopilotSubtitle = AppendReset(plan);
 
         UpdatePacingSubtitle();
 

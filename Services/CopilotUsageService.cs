@@ -33,9 +33,8 @@ public sealed class CopilotUsageService
 
     /// <summary>
     /// Which of the three sources supplied <see cref="_cachedToken"/> - set alongside it in
-    /// GetTokenAsync, and stamped onto every CopilotStatus this service returns so the panel
-    /// can say why a token was found (or explain why "Sign out" did not change anything: it
-    /// only ever clears the third source, see GitHubDeviceAuth.ClearToken).
+    /// GetTokenAsync and logged, so a report of "it shows the wrong account" can be traced to
+    /// the source that answered without the panel having to carry it on screen.
     /// </summary>
     private CopilotTokenSource _tokenSource = CopilotTokenSource.None;
 
@@ -117,28 +116,22 @@ public sealed class CopilotUsageService
             }
             if (!resp.IsSuccessStatusCode)
             {
-                // The source is still worth reporting: the token resolved fine, GitHub just
-                // did not answer, and dropping the note would make the panel look as though
-                // it had changed where it was reading from.
-                var source = _tokenSource;
                 _cachedToken = null; // force a refresh next time
                 AppLog.Warn($"Copilot: GitHub returned {(int)resp.StatusCode}");
                 return new CopilotStatus
                 {
                     Error = $"GitHub returned {(int)resp.StatusCode}",
-                    TokenSource = source,
                 };
             }
 
             var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             var status = Parse(json);
-            status.TokenSource = _tokenSource;
 
             // Change-only, and without the plan or org name - see the matching line in
             // ClaudeLimitsService. The org is the sharper case here: on the work machine the
             // seat is org-assigned, and the panel composes "<org> · <plan>" from these same
-            // fields, so logging them would put the employer's name in a file the context
-            // menu invites the user to attach to a public issue.
+            // fields, so logging them would put the employer's name in a file the user may
+            // well attach to a public issue.
             AppLog.Change("copilot.state", $"Copilot: poll ok - {status.Quotas.Count} quota bucket(s) reported");
             return status;
         }
@@ -149,7 +142,7 @@ public sealed class CopilotUsageService
         catch (Exception ex)
         {
             AppLog.Error("Copilot: usage poll failed", ex);
-            return new CopilotStatus { Error = ex.Message, TokenSource = _tokenSource };
+            return new CopilotStatus { Error = ex.Message };
         }
     }
 

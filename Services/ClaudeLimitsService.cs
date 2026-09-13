@@ -47,13 +47,10 @@ public sealed class ClaudeLimitsService
             // the grant. Offering a sign-in button here would tell an offline user to
             // re-authenticate over the connection they do not have, so this reports a
             // transient failure and the next poll tries again.
-            // A refresh that could not complete still leaves the stored sign-in in place,
-            // so the sign-out menu item stays available; a refused grant has already been
-            // cleared, so it does not.
             if (refreshFailed)
             {
                 AppLog.Warn("Claude: token refresh unreachable - reporting transient failure, stored sign-in kept");
-                return ClaudeLimitsStatus.Unavailable("Claude unreachable", transient: true, hasStoredSignIn: true);
+                return ClaudeLimitsStatus.Unavailable("Claude unreachable", transient: true);
             }
 
             // No sign-in on this machine yet, or the grant was refused outright. Either way
@@ -92,7 +89,7 @@ public sealed class ClaudeLimitsService
                     if (attempt > 0)
                     {
                         AppLog.Warn("Claude: usage API still 401 after a forced refresh - reporting transient, not signing out");
-                        return ClaudeLimitsStatus.Unavailable("Claude rejected the session", transient: true, hasStoredSignIn: true);
+                        return ClaudeLimitsStatus.Unavailable("Claude rejected the session", transient: true);
                     }
 
                     AppLog.Info("Claude: usage API returned 401 - forcing one token refresh before giving up");
@@ -104,7 +101,7 @@ public sealed class ClaudeLimitsService
                         if (renewFailed)
                         {
                             AppLog.Warn("Claude: forced refresh unreachable after a 401 - reporting transient failure");
-                            return ClaudeLimitsStatus.Unavailable("Claude unreachable", transient: true, hasStoredSignIn: true);
+                            return ClaudeLimitsStatus.Unavailable("Claude unreachable", transient: true);
                         }
 
                         AppLog.Warn("Claude: forced refresh was refused - grant is dead, offering sign-in");
@@ -118,18 +115,17 @@ public sealed class ClaudeLimitsService
                 if (!resp.IsSuccessStatusCode)
                 {
                     AppLog.Warn($"Claude: usage API returned {(int)resp.StatusCode}");
-                    return ClaudeLimitsStatus.Unavailable($"usage API returned {(int)resp.StatusCode}", transient: true, hasStoredSignIn: true);
+                    return ClaudeLimitsStatus.Unavailable($"usage API returned {(int)resp.StatusCode}", transient: true);
                 }
 
                 var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
                 var status = Parse(json);
                 status.Plan = tokens.SubscriptionType ?? status.Plan;
-                status.HasStoredSignIn = true;      // a token answered, so one is stored
 
                 // Change-only, and deliberately without the plan name. The plan never varies
                 // between polls, so repeating it every cadence tick is pure noise - and the
-                // menu invites the user to send this file in, where an account tier (on the
-                // work machine, an org-assigned seat) is more than a bug report needs.
+                // user may well send this file in, where an account tier (on the work
+                // machine, an org-assigned seat) is more than a bug report needs.
                 AppLog.Change("claude.state", $"Claude: poll ok - {status.Limits.Count} limit(s) reported");
                 return status;
             }
@@ -144,7 +140,7 @@ public sealed class ClaudeLimitsService
                 // completed, which a login could not have prevented and a few seconds usually
                 // fixes on its own.
                 AppLog.Error("Claude: usage poll failed", ex);
-                return ClaudeLimitsStatus.Unavailable(ex.Message, transient: true, hasStoredSignIn: true);
+                return ClaudeLimitsStatus.Unavailable(ex.Message, transient: true);
             }
         }
     }

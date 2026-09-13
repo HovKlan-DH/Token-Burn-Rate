@@ -25,16 +25,15 @@ namespace TokenBurnRate.Services;
 ///
 /// Deliberately separate from <see cref="CrashLog"/>: that one exists to catch an unhandled
 /// exception on its way down, and fires rarely by design. This one records ordinary
-/// operation - each poll's outcome, sign-in/sign-out, recoverable failures - so a report of
-/// "the Claude panel went blank yesterday" has something to look at even though nothing
-/// crashed.
+/// operation - each poll's outcome, sign-in, recoverable failures - so a report of "the
+/// Claude panel went blank yesterday" has something to look at even though nothing crashed.
 ///
 /// Lives beside the state file - same folder <see cref="AppState.Path"/> resolves to, which
 /// already handles a read-only program folder and a Velopack install - so both settle in one
 /// place together.
 ///
-/// Every entry point is safe to call from anywhere, <see cref="FilePath"/> included: a
-/// logging failure must never surface to the caller or take down the poll it was describing.
+/// Every entry point is safe to call from anywhere: a logging failure must never surface to
+/// the caller or take down the poll it was describing.
 /// </summary>
 public static class AppLog
 {
@@ -109,7 +108,7 @@ public static class AppLog
                     File.AppendAllText(
                         path,
                         $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} [WARN] log reached {MaxBytes / (1024 * 1024)} MB - "
-                        + $"no further entries will be written until the app restarts{Environment.NewLine}",
+                        + $"no further entries will be written until the application restarts{Environment.NewLine}",
                         new UTF8Encoding(false));
                     return;
                 }
@@ -212,30 +211,4 @@ public static class AppLog
         File.WriteAllText(path, sb.ToString(), new UTF8Encoding(false));
     }
 
-    /// <summary>
-    /// The file path this run is writing to, so the context menu can offer to open it.
-    ///
-    /// Never throws. Creating the file is real I/O that can fail on a read-only folder or a
-    /// share that went away, and this is reached from a menu click handler - letting it throw
-    /// would turn "show me the log" into an unhandled exception on the UI thread and take the
-    /// widget down over the very failure the log exists to diagnose. Returns null when there
-    /// is nothing openable, and the caller simply does nothing.
-    /// </summary>
-    public static string? FilePath
-    {
-        get
-        {
-            try
-            {
-                lock (Gate)
-                {
-                    return _path ??= StartNewFile();
-                }
-            }
-            catch (Exception)
-            {
-                return null;
-            }
-        }
-    }
 }
