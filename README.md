@@ -90,20 +90,18 @@ sign in.
 - Silent/unattended install is supported: run the Windows installer with `--silent`.
 - Installs to the current user's local application data folder, not `Program Files`.
 - Self-updates automatically from GitHub Releases; this can be turned off manually per machine (by the user) from
-  the right-click menu (Advanced → Auto-update to newest version).
+  the right-click menu (`Advanced` → `Auto-update to newest version`).
 - The Windows installer and executable are code-signed (YubiKey-backed certificate); a
   SmartScreen warning, if any, is reputation-based and temporary, not a sign of tampering.
 - macOS builds are not signed or notarized and require a right-click **Open** to bypass
   Gatekeeper.
-- Outbound HTTPS only, to: `api.anthropic.com` (Claude usage), `api.github.com` and
-  `github.com` (Copilot usage and sign-in), and `mailscan.dk` (a version/OS check-in from
-  the developer, no usage data).
-- Reads only usage figures already visible to the signed-in user on claude.ai and
-  github.com - no code, prompts, or repository content is ever accessed.
+- Outbound HTTPS only, to: `api.anthropic.com` (Claude), `api.github.com` and
+  `github.com` (Copilot), and `mailscan.dk` (a mandatory version check-in, no usage data).
+- Reads only usage figures already visible to the signed-in user on `claude.ai` and
+  `github.com` - no code, prompts, or repository content is ever accessed.
 - Each user signs in individually with their own Claude and GitHub account; there is no
   shared or service account, and no credentials are centrally managed.
-- Sign-in tokens are stored locally per user (`%LocalAppData%` on Windows), encrypted at
-  rest on Windows and owner-only readable elsewhere.
+- Sign-in tokens are stored locally per user (`%LocalAppData%` on Windows), encrypted at-rest on Windows and owner-only readable elsewhere.
 - Registers a per-user autostart entry (`HKCU` on Windows) if left enabled; never writes to
   machine-wide (`HKLM`) locations.
-- Open source: [github.com/HovKlan-DH/Token-Burn-Rate](https://github.com/HovKlan-DH/Token-Burn-Rate).
+- Project is full open source: [github.com/HovKlan-DH/Token-Burn-Rate](https://github.com/HovKlan-DH/Token-Burn-Rate).
