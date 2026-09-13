@@ -141,6 +141,14 @@ public sealed class BarViewModel : INotifyPropertyChanged
     /// </summary>
     public int TodayMarkerIndex { get => _todayMarkerIndex; set => Set(ref _todayMarkerIndex, value); }
 
+    /// <summary>
+    /// The reset instant the current <see cref="Markers"/> were derived from, on the bars
+    /// that have a rolling window (Claude's WEEK). Kept so the accented "today" tick can be
+    /// recomputed when the clock crosses midnight without a poll - see
+    /// MainViewModel.RefreshDayMarkers. Null on every bar whose ticks are not date-derived.
+    /// </summary>
+    public DateTimeOffset? MarkerWindowEnd { get; set; }
+
     public event PropertyChangedEventHandler? PropertyChanged;
     private void OnPropertyChanged([CallerMemberName] string? n = null)
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(n));
@@ -281,12 +289,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// </summary>
     private bool _copilotUsingOwnSignIn;
 
-    /// <summary>
-    /// Which source actually supplied the current Copilot token - kept for the subtitle
-    /// annotation that explains why data is showing when this app has no sign-in of its own
-    /// (see <see cref="CopilotSourceNote"/>). Absent whenever the panel has nothing to show.
-    /// </summary>
-    private Models.CopilotTokenSource _copilotTokenSource = Models.CopilotTokenSource.None;
     private bool _pacingVisible;
     private string _pacingSubtitle = "";
     // Kept apart from CopilotSubtitle so the pacing panel can borrow it when the Copilot
@@ -391,10 +393,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     Colour = a.Icon?.Colour ?? _iconColour,
                 });
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 // A read-only or malformed file must never stop the app from running; the
                 // chosen source still governs this run, it just is not recorded.
+                AppLog.Warn($"Settings: could not persist icon source - {ex.GetType().Name}: {ex.Message}");
             }
         }
     }
@@ -604,26 +607,20 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         OnPropertyChanged(nameof(CopilotBarsVisible));
         OnPropertyChanged(nameof(CopilotSignInHintVisible));
-        OnPropertyChanged(nameof(CopilotSourceNoteVisible));
     }
 
     /// <summary>
-    /// Records which source supplied the current Copilot token and announces everything that
-    /// reads it - the source note, its visibility, and whether "Sign out of GitHub" applies.
-    ///
-    /// Routed through one method for the same reason <see cref="CopilotBodyChanged"/> is:
-    /// three properties derive from these two fields, and a caller that set them and raised
-    /// only some would leave the menu offering a sign-out for a token that is no longer in
-    /// use, or the panel crediting the wrong source.
+    /// Records whether the current Copilot token is this app's own, and announces whether
+    /// "Sign out of GitHub" applies. Which source it was otherwise is no longer kept here -
+    /// it used to feed a small panel caption explaining a `gh` CLI or env-var token, which
+    /// read as clutter next to the bars, and it now goes only to the log (see
+    /// CopilotUsageService) for debugging.
     /// </summary>
     private void SetCopilotTokenSource(Models.CopilotTokenSource source)
     {
-        _copilotTokenSource = source;
         _copilotUsingOwnSignIn = source == Models.CopilotTokenSource.OwnSignIn;
 
         OnPropertyChanged(nameof(CopilotSignOutVisible));
-        OnPropertyChanged(nameof(CopilotSourceNote));
-        OnPropertyChanged(nameof(CopilotSourceNoteVisible));
     }
 
     public bool CopilotAvailable
@@ -671,38 +668,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
         "Sign in to see your GitHub Copilot usage here. This is a one-time sign-in for this machine.";
 
     /// <summary>
-    /// Explains where the Copilot data on screen actually came from, whenever it is not this
-    /// app's own sign-in - empty otherwise, so the common case (this app's own token, or
-    /// nothing to show) adds nothing to the header row.
-    ///
-    /// This exists because "signed out of Copilot" is not one action: an environment
-    /// variable or a `gh` CLI session that is still live will keep showing real data even
-    /// after "Sign out of GitHub" clears this app's own token, and without this note that
-    /// reads as the sign-out having silently failed rather than as three independent sources
-    /// each being individually true.
-    /// </summary>
-    public string CopilotSourceNote => _copilotTokenSource switch
-    {
-        Models.CopilotTokenSource.GitHubCli => "via the gh CLI's own sign-in",
-        Models.CopilotTokenSource.EnvironmentVariable => "via GH_TOKEN / GITHUB_TOKEN",
-        _ => "",
-    };
-
-    /// <summary>
-    /// Whether <see cref="CopilotSourceNote"/> has anything to show - kept as its own bool
-    /// rather than binding the XAML to the string's length directly.
-    ///
-    /// Gated on CopilotExpanded like every other element of the panel's body: without it the
-    /// note stayed on screen under a collapsed header, leaving the panel visibly refusing to
-    /// collapse while its chevron claimed it had.
-    /// </summary>
-    public bool CopilotSourceNoteVisible => CopilotExpanded && CopilotSourceNote.Length > 0;
-
-    /// <summary>
     /// Whether "Sign out of GitHub" should appear in the context menu - only when there is a
     /// sign-in of this app's own to revoke, the Copilot analogue of ClaudeSignOutVisible.
     /// Deliberately not offered for the `gh` CLI or environment-variable sources: this app
     /// has no token of its own to forget in either case, and the command would do nothing.
+    /// Which of the three sources is actually in play is logged (see
+    /// CopilotUsageService/AppLog) rather than shown in the panel.
     /// </summary>
     public bool CopilotSignOutVisible => _copilotUsingOwnSignIn;
 
@@ -1440,11 +1411,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
                         var (markers, todayIndex) = RollingWeekTodayMarkers(l.ResetsAt);
                         bar.Markers = markers;
                         bar.TodayMarkerIndex = todayIndex;
+                        bar.MarkerWindowEnd = l.ResetsAt;
                     }
                     else
                     {
                         bar.Markers = null;
                         bar.TodayMarkerIndex = -1;
+                        bar.MarkerWindowEnd = null;
                     }
 
                     // No warning glyph here: this caption is the reset time, not a percentage,
@@ -1607,18 +1580,39 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// Builds markers for Claude's rolling 7-day window, spanning the whole window - days
     /// still ahead included - on the same "spend it within your work week" reading as
     /// Copilot's My Pace; see <see cref="WeekMarkers"/>. Unlike that grid, this one carries
-    /// no workday count: Claude's window is calendar days, not a configurable work week, so
-    /// every local midnight inside the window gets a tick regardless of weekday.
+    /// no workday count: Claude's window is calendar days, not a configurable work week.
     ///
-    /// The window resets at whatever clock time the account last reset at, not at midnight,
-    /// so it is not made of seven equal 24h days - the first and last days are clipped to
-    /// however much of them actually falls inside the window (e.g. a window ending Saturday
-    /// 18:00 has an 18-hour last day, not a 24-hour one). Ticks are therefore placed at real
-    /// local midnights clamped to the window, not at equal i/7 fractions. "Today" is not one
-    /// of those midnight ticks either: it is "now"'s own true fractional position, inserted
-    /// into the sorted list, so the segment between it and the next boundary shrinks to
-    /// reflect the real time left before that boundary (typically the next midnight, or the
-    /// window's own end on the final day).
+    /// Ticks fall on every local midnight strictly inside the window, so the separators are
+    /// calendar day boundaries - the thing a person actually means by "yesterday" - rather
+    /// than multiples of whatever clock time the account happens to reset at.
+    ///
+    /// That makes the first and last segments short, and deliberately so: a window running
+    /// Saturday 18:00 to Saturday 18:00 reads as 6h (Sat evening) + 24h x6 (Sun..Fri) + 18h
+    /// (Sat until the reset) - eight segments from seven ticks. Spacing the ticks 24h apart
+    /// from the reset instead was tried and is wrong: it draws six evenly spaced separators
+    /// at 18:00 each day, which are not day boundaries at all and leave the bar unable to
+    /// answer "how much did I spend yesterday".
+    ///
+    /// Each midnight is rebuilt from its own calendar date with that date's own UTC offset,
+    /// rather than by repeatedly adding 24h: the day a DST transition falls on is 23 or 25
+    /// real hours, so a fixed step would drift every later tick off midnight. The window
+    /// start is likewise derived in UTC - DateTimeOffset.AddDays would carry the end's
+    /// offset backwards unchanged and land an hour off across a transition, which silently
+    /// dropped a whole separator through the "> start" filter below.
+    ///
+    /// Every marker is a midnight; "now" is never one of them. The accented marker is the
+    /// midnight that *ends* today - tonight's boundary - so on a Sunday the red tick sits
+    /// between Sunday and Monday, marking where the day in progress runs out. An earlier
+    /// version inserted "now" as an extra marker and accented that, which put the red line
+    /// at the current clock time: it drifted every poll, was not a day boundary, and left
+    /// the bar with one more separator than the window has days. This matches the My Pace
+    /// week bar, where TodayMarkerIndex likewise selects one of the existing boundaries
+    /// rather than adding one.
+    ///
+    /// The index is -1 when tonight's midnight is not a tick on this bar: on the window's
+    /// final day it falls past the reset, and during the window's first partial day it has
+    /// not been reached yet. In both cases the day in progress is bounded by the bar's own
+    /// edge rather than by a separator, so every tick draws muted.
     /// </summary>
     private static (IReadOnlyList<double>? Markers, int TodayIndex) RollingWeekTodayMarkers(
         DateTimeOffset? resetsAt)
@@ -1626,28 +1620,15 @@ public sealed class MainViewModel : INotifyPropertyChanged
         if (resetsAt is not { } reset) return (null, -1);
 
         var end = reset.ToLocalTime();
-
-        // Seven days back measured as a real elapsed duration, then converted to whatever
-        // local offset actually applied at that instant. DateTimeOffset.AddDays carries the
-        // *end* offset backwards unchanged, so across a DST transition it lands an hour off
-        // the true window start: a window ending 28 Oct 12:00 CET (+01:00) got a start of
-        // 21 Oct 12:00+01:00, an instant whose real wall clock was 13:00 CEST (+02:00). That
-        // skewed every fraction below and, because the first midnight is filtered on
-        // "> start", silently dropped one whole day separator off the bar.
-        var startUtc = end.UtcDateTime.AddDays(-7);
-        var start = TimeZoneInfo.ConvertTime(new DateTimeOffset(startUtc, TimeSpan.Zero), TimeZoneInfo.Local);
+        var start = TimeZoneInfo.ConvertTime(
+            new DateTimeOffset(end.UtcDateTime.AddDays(-7), TimeSpan.Zero), TimeZoneInfo.Local);
 
         var span = (end - start).Ticks;
         if (span <= 0) return (null, -1);
 
         // Local midnights strictly inside (start, end) - the endpoints are the bar's own
         // edges already and need no tick of their own.
-        //
-        // Each midnight is rebuilt from its own calendar date with that date's own offset,
-        // rather than by repeatedly adding 24h: the day a DST transition falls on is 23 or
-        // 25 hours long, so stepping by a fixed day would drift the ticks off midnight for
-        // the rest of the window.
-        var ticks = new List<double>();
+        var ticks = new List<double>(7);
         for (var day = start.Date.AddDays(1); day < end.DateTime.AddDays(1); day = day.AddDays(1))
         {
             var midnight = LocalMidnight(day);
@@ -1657,20 +1638,26 @@ public sealed class MainViewModel : INotifyPropertyChanged
             ticks.Add((midnight - start).Ticks / (double)span);
         }
 
-        var now = DateTimeOffset.Now;
-        var nowFraction = Math.Clamp((now - start).Ticks / (double)span, 0, 1);
+        // The midnight that *ends* today - tonight's boundary, the right edge of the day in
+        // progress. On a Sunday that is the Sun->Mon tick, so the accent sits where today
+        // stops rather than where it began.
+        //
+        // Compared as instants rather than fractions: the tick list is built from instants
+        // too, so matching on the same basis avoids a rounding difference deciding which
+        // side of a boundary "tonight" falls on.
+        var tonight = LocalMidnight(DateTimeOffset.Now.LocalDateTime.Date.AddDays(1));
 
-        var todayIndex = 0;
-        while (todayIndex < ticks.Count && ticks[todayIndex] < nowFraction) todayIndex++;
+        var todayIndex = -1;
+        for (var i = 0; i < ticks.Count; i++)
+        {
+            var tick = start.AddTicks((long)Math.Round(ticks[i] * span));
+            if (tick == tonight) { todayIndex = i; break; }
+        }
 
-        // A poll landing exactly on a midnight boundary - reachable, since the timer fires
-        // every few minutes - already has a tick at this fraction. Inserting "now" as well
-        // would stack a muted separator underneath the accent one and draw the window with
-        // one day-divider more than it has, so that midnight simply becomes today's marker.
-        if (todayIndex < ticks.Count && ticks[todayIndex] == nowFraction)
-            return (ticks, todayIndex);
-
-        ticks.Insert(todayIndex, nowFraction);
+        // No match on the window's last day: tonight's midnight falls past the reset, so it
+        // is not a tick on this bar at all and the day in progress simply runs to the bar's
+        // own right edge. The same is true before the first midnight of a window that starts
+        // mid-day. Both leave every tick muted, which is what -1 means.
         return (ticks, todayIndex);
     }
 
@@ -1679,7 +1666,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// actually applies on that date rather than one inherited from another day.
     ///
     /// On the day a DST transition lands, local midnight may not exist at all (spring
-    /// forward in zones that shift at 00:00, e.g. some of South America): TimeZoneInfo
+    /// forward in zones that shift at 00:00, e.g. parts of South America): TimeZoneInfo
     /// reports such a time as invalid, and the first valid instant of that day is what the
     /// bar should tick at instead.
     /// </summary>
@@ -1737,12 +1724,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
             if (string.IsNullOrWhiteSpace(token))
             {
+                AppLog.Info("GitHub: sign-in cancelled or timed out");
                 SignInText = "Sign in to GitHub";
                 SignInCode = "";
                 CopilotSubtitle = "sign-in cancelled or timed out";
                 return;
             }
 
+            AppLog.Info("GitHub: sign-in approved, token saved");
             GitHubDeviceAuth.SaveToken(token);
             _copilot.InvalidateToken();
 
@@ -1760,6 +1749,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
         catch (Exception ex)
         {
+            AppLog.Error("GitHub: sign-in failed", ex);
             SignInText = "Sign in to GitHub";
             SignInCode = "";
             CopilotSubtitle = "sign-in failed: " + ex.Message;
@@ -1790,7 +1780,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _claudeSignInRunning = true;
         try
         {
-            if (!await showDialog().ConfigureAwait(true)) return;
+            if (!await showDialog().ConfigureAwait(true))
+            {
+                AppLog.Info("Claude: sign-in dialog cancelled");
+                return;
+            }
+
+            AppLog.Info("Claude: sign-in approved, token saved");
 
             // A fresh sign-in invalidates every reason the panel had to be skipping polls:
             // the gate below is keyed on limits that were read with a token we no longer
@@ -1803,6 +1799,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
         catch (Exception ex)
         {
+            AppLog.Error("Claude: sign-in failed", ex);
             ClaudeSubtitle = "sign-in failed: " + ex.Message;
         }
         finally
@@ -1822,6 +1819,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public async Task SignOutOfClaudeAsync(CancellationToken ct = default)
     {
         var cleared = ClaudeTokenStore.Clear();
+        AppLog.Info(cleared ? "Claude: signed out, token file cleared" : "Claude: sign-out could not delete the token file");
 
         _claudeHasPolled = false;       // nothing polled with the new (absent) credentials
         _claudeSkipUntil = null;
@@ -1856,7 +1854,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// This is deliberately narrower than "sign out of Copilot": an env var or a `gh` CLI
     /// session are two other sources GetTokenAsync checks first, and this app has no way to
     /// sign either of those out - clearing this file will not change what the panel shows if
-    /// either is still live, and CopilotSourceNote is what explains that when it happens.
+    /// either is still live; the log line CopilotUsageService writes on each poll is what
+    /// explains that when it happens.
     /// </summary>
     public async Task SignOutOfGitHubAsync(CancellationToken ct = default)
     {
@@ -1869,6 +1868,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         SignInCode = "";
 
         var cleared = GitHubDeviceAuth.ClearToken();
+        AppLog.Info(cleared ? "GitHub: signed out, token file cleared" : "GitHub: sign-out could not delete the token file");
         _copilot.InvalidateToken();
 
         _copilotFound = false;
@@ -1939,6 +1939,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// </summary>
     public void OpenConfigurationFolder() => OpenFolder(ConfigurationFolder);
 
+    /// <summary>
+    /// Opens the running log file in whatever the OS treats a .log as - Notepad on Windows,
+    /// typically. Reuses <see cref="OpenFolder"/>'s ShellExecute call rather than a separate
+    /// helper: launching a file by its default handler is the same call as launching a
+    /// folder in Explorer, just given a different path.
+    /// </summary>
+    public void OpenLogFile() => OpenFolder(Services.AppLog.FilePath);
+
     /// <summary>The running executable's own folder.</summary>
     private static string? ApplicationFolder =>
         System.IO.Path.GetDirectoryName(Environment.ProcessPath);
@@ -1958,21 +1966,25 @@ public sealed class MainViewModel : INotifyPropertyChanged
             System.IO.Path.TrimEndingDirectorySeparator(ConfigurationFolder ?? string.Empty),
             StringComparison.Ordinal);
 
-    private static void OpenFolder(string? dir)
+    /// <summary>
+    /// Opens a folder in the OS file browser, or a file in whatever the OS treats its
+    /// extension as - ShellExecute (UseShellExecute) does not distinguish the two.
+    /// </summary>
+    private static void OpenFolder(string? path)
     {
-        if (string.IsNullOrWhiteSpace(dir)) return;
+        if (string.IsNullOrWhiteSpace(path)) return;
 
         try
         {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(dir)
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path)
             {
                 UseShellExecute = true,
             });
         }
         catch (Exception)
         {
-            // No file browser on this desktop, or the folder is gone: nothing to open,
-            // nothing worth surfacing to a monitor.
+            // No associated application on this desktop, or the path is gone: nothing to
+            // open, nothing worth surfacing to a monitor.
         }
     }
 
@@ -2009,6 +2021,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         bar.IsUnlimited = false;
         bar.Markers = null;
         bar.TodayMarkerIndex = -1;
+        bar.MarkerWindowEnd = null;
     }
 
     /// <summary>
@@ -2227,10 +2240,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
         {
             AppState.Update(a => a.RefreshSeconds = seconds);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             // A read-only or malformed file must never stop the app from polling; the
             // clamped value still governs this run, it just is not recorded.
+            AppLog.Warn($"Settings: could not persist refresh interval - {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -2263,10 +2277,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
         {
             AppState.Update(a => a.Icon = new AppState.IconState { Source = validSource, Colour = validColour });
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             // A read-only or malformed file must never stop the app from running; the
             // resolved values still govern this run, they just are not recorded.
+            AppLog.Warn($"Settings: could not persist icon config - {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -2303,10 +2318,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 a.Colors = colors;
             });
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             // A read-only or malformed file must never stop the app from running; the
             // resolved colors still govern this run, they just are not recorded.
+            AppLog.Warn($"Settings: could not persist resolved colors - {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -2439,10 +2455,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 a.Colors = c;
             });
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             // A read-only or malformed file must never stop the app from running; the
             // chosen color still governs this run, it just is not recorded.
+            AppLog.Warn($"Settings: could not persist accent color - {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -2514,6 +2531,39 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public bool RetryDue => _retryDelay is not null && !IsRefreshing
         && DateTimeOffset.UtcNow >= _nextRefresh;
 
+    /// <summary>The local date the week bar's "today" tick was last computed for.</summary>
+    private DateTime _markersComputedOn = DateTime.Now.Date;
+
+    /// <summary>
+    /// Recomputes the accented "today" tick on any bar whose ticks are date-derived, once the
+    /// local date has actually changed.
+    ///
+    /// The markers are otherwise only built by a poll, and a poll is exactly what does not
+    /// happen across the midnight in question: once every active Claude limit is spent,
+    /// <see cref="_claudeSkipUntil"/> suppresses the call until the reset, which for the
+    /// seven-day window can be days away. A limit spent at 23:50 would leave the red tick
+    /// marking yesterday's boundary for the rest of the skip - not a stale figure but a wrong
+    /// one, since the tick names a specific day.
+    ///
+    /// Cheap enough for the one-second countdown tick to carry: the date comparison is all
+    /// that runs on all but one tick a day.
+    /// </summary>
+    private void RefreshDayMarkers()
+    {
+        var today = DateTime.Now.Date;
+        if (today == _markersComputedOn) return;
+        _markersComputedOn = today;
+
+        foreach (var bar in ClaudeBars)
+        {
+            if (bar.MarkerWindowEnd is not { } end) continue;
+
+            var (markers, todayIndex) = RollingWeekTodayMarkers(end);
+            bar.Markers = markers;
+            bar.TodayMarkerIndex = todayIndex;
+        }
+    }
+
     /// <summary>
     /// Updates the countdown to the next refresh. Both services are refreshed by one timer,
     /// so there is a single figure rather than one per panel. Driven once a second by the
@@ -2521,6 +2571,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// </summary>
     public void TickCountdowns()
     {
+        RefreshDayMarkers();
+
         var d = _nextRefresh - DateTimeOffset.UtcNow;
         if (d <= TimeSpan.Zero)
         {

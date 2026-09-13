@@ -199,7 +199,7 @@
                     ToolTip.Tip="Forget the Claude sign-in stored by this widget"/>
           <!-- Only shown while the panel is running on this app's own device-flow token -
                not on an env var or a `gh` CLI session, which this command has no power over
-               (see CopilotSourceNote, shown in the panel when either of those is in play). -->
+               (logged by CopilotUsageService when either of those is in play). -->
           <MenuItem Name="CopilotSignOutItem" Header="Sign out of GitHub"
                     IsVisible="{Binding CopilotSignOutVisible}"
                     ToolTip.Tip="Forget the GitHub sign-in stored by this widget"/>
@@ -211,6 +211,12 @@
           <MenuItem Name="OpenConfigFolderItem" Header="Open configuration folder"
                     IsVisible="{Binding ConfigurationFolderDiffers}"
                     ToolTip.Tip="Open the folder holding the state file"/>
+          <!-- Opens the running log directly - both accounts' poll activity and any
+               recoverable errors, with nothing sensitive in it (see AppLog) - so the user
+               can grab it for a bug report without having to know it sits in the
+               configuration folder above. -->
+          <MenuItem Name="OpenLogFileItem" Header="Open log file"
+                    ToolTip.Tip="Open the application log, for sending in a bug report"/>
           <Separator/>
           <MenuItem Name="ProjectPageItem" Header="Project page on GitHub"
                     ToolTip.Tip="https://github.com/HovKlan-DH/Token-Burn-Rate"/>
@@ -339,13 +345,10 @@
                      HorizontalAlignment="Right" VerticalAlignment="Center" Margin="8,0,0,0"
                      MaxWidth="200"/>
         </Grid>
-        <!-- Explains where the data actually came from whenever it is not this app's own
-             sign-in - empty and so invisible the rest of the time. Its own row rather than
-             folded into CopilotSubtitle above: that string is already a truncated
-             plan/org/reset composite at MaxWidth 200, with no room left for this without
-             clipping one of the two. -->
-        <TextBlock Text="{Binding CopilotSourceNote}" Classes="subtitle" FontSize="9"
-                   IsVisible="{Binding CopilotSourceNoteVisible}"/>
+        <!-- Where the data actually came from (this app's own sign-in, the gh CLI, or an env
+             var) used to be shown here as a small caption whenever it was not this app's own
+             sign-in - it read as clutter next to the bars, so it is only in the log now
+             (see CopilotUsageService/AppLog) rather than on screen. -->
         <ItemsControl ItemsSource="{Binding CopilotBars}" IsVisible="{Binding CopilotBarsVisible}"
                       ItemTemplate="{StaticResource BarTemplate}"/>
 

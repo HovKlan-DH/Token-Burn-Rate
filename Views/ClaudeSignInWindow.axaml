@@ -30,6 +30,10 @@
       <Setter Property="FontSize" Value="11"/>
       <Setter Property="Foreground" Value="#E8EAED"/>
       <Setter Property="FontWeight" Value="SemiBold"/>
+      <!-- Wraps like .body does. The window is a fixed 400px and cannot be resized, so a
+           heading longer than about forty characters is silently truncated mid-phrase
+           without this - in the one dialog the user has never seen before. -->
+      <Setter Property="TextWrapping" Value="Wrap"/>
     </Style>
   </Window.Styles>
 
@@ -41,11 +45,11 @@
          user should be able to tell the difference without taking our word for it, so the
          text points at where the browser will land and what the grant can do. -->
     <TextBlock Classes="body"
-               Text="This lets the widget read your Claude usage without Claude Code being installed. It opens claude.ai in your browser - you approve the same way Claude Code does, and your password is never seen by this app."/>
+               Text="You need to login to Claude and authorize this application to read your Claude usage. It opens claude.ai in your browser - your password is never seen by this app."/>
 
     <Border Background="#26282D" CornerRadius="4" Padding="12">
       <StackPanel Spacing="8">
-        <TextBlock Classes="step" Text="1.  Approve in your browser"/>
+        <TextBlock Classes="step" Text="Step 1: Approve in your browser"/>
         <TextBlock Classes="body"
                    Text="Your browser should have opened. If not, use the button below to open it again."/>
         <!-- Reads as a link rather than a button: it is the fallback for a browser that did
@@ -55,9 +59,13 @@
                 Background="Transparent" Foreground="#6CA8F5" Padding="0,2"
                 Content="Open the sign-in page again"/>
 
-        <TextBlock Classes="step" Text="2.  Paste the code you are shown" Margin="0,4,0,0"/>
+        <TextBlock Classes="step" Text="Step 2: Copy the authorization code from Claude web page to the application" Margin="0,4,0,0"/>
+        <!-- Leads with the action the user is actually stuck on - Claude shows the code in
+             the browser and nothing else on screen says it has to be brought back here. The
+             TextBox placeholder below is not a substitute: it disappears as soon as the box
+             takes focus. -->
         <TextBlock Classes="body"
-                   Text="Claude shows a code after you approve. Copy it and paste it here."/>
+                   Text="Claude shows a code in your browser after you approve. Copy it and paste it below. When you have pasted the code, then click &quot;Sign in&quot; and you should see your Claude usage."/>
         <TextBox Name="CodeBox"
                  PlaceholderText="Paste the code here"
                  FontSize="11"

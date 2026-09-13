@@ -51,10 +51,14 @@ public sealed class ClaudeLimitsService
             // so the sign-out menu item stays available; a refused grant has already been
             // cleared, so it does not.
             if (refreshFailed)
+            {
+                AppLog.Warn("Claude: token refresh unreachable - reporting transient failure, stored sign-in kept");
                 return ClaudeLimitsStatus.Unavailable("Claude unreachable", transient: true, hasStoredSignIn: true);
+            }
 
             // No sign-in on this machine yet, or the grant was refused outright. Either way
             // the fix is the same and the panel offers it.
+            AppLog.Change("claude.state", "Claude: not signed in - offering sign-in");
             return ClaudeLimitsStatus.Unavailable("not signed in", canSignIn: true);
         }
 
@@ -86,16 +90,25 @@ public sealed class ClaudeLimitsService
                     // gone. If it succeeds and the retry still 401s, the token was never the
                     // problem, and that is reported as transient rather than as a sign-out.
                     if (attempt > 0)
+                    {
+                        AppLog.Warn("Claude: usage API still 401 after a forced refresh - reporting transient, not signing out");
                         return ClaudeLimitsStatus.Unavailable("Claude rejected the session", transient: true, hasStoredSignIn: true);
+                    }
 
+                    AppLog.Info("Claude: usage API returned 401 - forcing one token refresh before giving up");
                     var (renewed, renewFailed) = await ForceRefreshAsync(ct).ConfigureAwait(false);
                     if (renewed is null)
                     {
                         // Could not reach the endpoint to find out: the grant is untouched
                         // and still on disk, so this is a blip, not a sign-out.
-                        return renewFailed
-                            ? ClaudeLimitsStatus.Unavailable("Claude unreachable", transient: true, hasStoredSignIn: true)
-                            : ClaudeLimitsStatus.Unavailable("Sign-in expired", canSignIn: true);
+                        if (renewFailed)
+                        {
+                            AppLog.Warn("Claude: forced refresh unreachable after a 401 - reporting transient failure");
+                            return ClaudeLimitsStatus.Unavailable("Claude unreachable", transient: true, hasStoredSignIn: true);
+                        }
+
+                        AppLog.Warn("Claude: forced refresh was refused - grant is dead, offering sign-in");
+                        return ClaudeLimitsStatus.Unavailable("Sign-in expired", canSignIn: true);
                     }
 
                     tokens = renewed;
@@ -103,12 +116,21 @@ public sealed class ClaudeLimitsService
                 }
 
                 if (!resp.IsSuccessStatusCode)
+                {
+                    AppLog.Warn($"Claude: usage API returned {(int)resp.StatusCode}");
                     return ClaudeLimitsStatus.Unavailable($"usage API returned {(int)resp.StatusCode}", transient: true, hasStoredSignIn: true);
+                }
 
                 var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
                 var status = Parse(json);
                 status.Plan = tokens.SubscriptionType ?? status.Plan;
                 status.HasStoredSignIn = true;      // a token answered, so one is stored
+
+                // Change-only, and deliberately without the plan name. The plan never varies
+                // between polls, so repeating it every cadence tick is pure noise - and the
+                // menu invites the user to send this file in, where an account tier (on the
+                // work machine, an org-assigned seat) is more than a bug report needs.
+                AppLog.Change("claude.state", $"Claude: poll ok - {status.Limits.Count} limit(s) reported");
                 return status;
             }
             catch (OperationCanceledException)
@@ -121,6 +143,7 @@ public sealed class ClaudeLimitsService
                 // the boot-time case this whole flag exists for: the connection itself never
                 // completed, which a login could not have prevented and a few seconds usually
                 // fixes on its own.
+                AppLog.Error("Claude: usage poll failed", ex);
                 return ClaudeLimitsStatus.Unavailable(ex.Message, transient: true, hasStoredSignIn: true);
             }
         }
@@ -149,10 +172,11 @@ public sealed class ClaudeLimitsService
         {
             throw;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             // Could not reach the endpoint. The tokens stay put - see ResolveTokenAsync -
             // and the caller reports this as a failure to renew rather than a sign-out.
+            AppLog.Warn($"Claude: forced token refresh transport failure - {ex.GetType().Name}: {ex.Message}");
             return (null, true);
         }
         finally
@@ -266,18 +290,21 @@ public sealed class ClaudeLimitsService
             // so the panel should offer a sign-in rather than treat it as transient.
             var refreshed = await (_oauth ??= new ClaudeOAuth())
                 .RefreshAsync(tokens.RefreshToken, ct).ConfigureAwait(false);
+            if (refreshed is null)
+                AppLog.Warn("Claude: scheduled token refresh was refused - clearing stored sign-in");
             return (refreshed, false);
         }
         catch (OperationCanceledException)
         {
             throw;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             // A transport failure says nothing about the grant - an offline laptop must not
             // be signed out by it, and must not be shown a sign-in button either. The stored
             // tokens stay put and the caller reports a transient failure, so the next poll
             // simply tries again.
+            AppLog.Warn($"Claude: scheduled token refresh transport failure - {ex.GetType().Name}: {ex.Message}");
             return (null, true);
         }
         finally

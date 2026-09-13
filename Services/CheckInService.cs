@@ -68,10 +68,15 @@ public static class CheckInService
             });
 
             using var resp = await http.PostAsync(Endpoint, content).ConfigureAwait(false);
+            AppLog.Info($"Check-in: posted, server returned {(int)resp.StatusCode}");
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             // Offline, DNS failure, server hiccup - none of it should affect the widget.
+            // Logged anyway: it is the earliest outbound request the app makes, so a failure
+            // here is usually the first sign that this machine has no connectivity at all,
+            // which is worth seeing above a run of Claude/Copilot timeouts.
+            AppLog.Warn($"Check-in: failed - {ex.GetType().Name}: {ex.Message}");
         }
     }
 }

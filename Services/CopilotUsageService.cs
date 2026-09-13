@@ -70,13 +70,27 @@ public sealed class CopilotUsageService
         {
             token = await GetTokenAsync(ct).ConfigureAwait(false);
         }
+        catch (OperationCanceledException)
+        {
+            // The poll was cancelled - the app is shutting down, or a refresh was superseded.
+            // RunGhAuthTokenAsync catches only Win32Exception, so a cancelled `gh auth token`
+            // surfaces here rather than as a gh failure: without this guard every shutdown on
+            // a machine with the CLI installed logged a false "gh CLI unavailable" and painted
+            // the same text into the panel on the way out. Matches the rethrow the request
+            // below already does.
+            throw;
+        }
         catch (Exception ex)
         {
+            AppLog.Warn($"Copilot: gh CLI unavailable - {ex.GetType().Name}: {ex.Message}");
             return new CopilotStatus { Error = "gh CLI unavailable: " + ex.Message };
         }
 
         if (string.IsNullOrWhiteSpace(token))
+        {
+            AppLog.Change("copilot.state", "Copilot: not signed in - offering sign-in");
             return new CopilotStatus { Error = "Not signed in", NeedsSignIn = true };
+        }
 
         try
         {
@@ -90,7 +104,15 @@ public sealed class CopilotUsageService
                 // Only ever clears the device-flow file - a rejected env-var or `gh` token
                 // is left exactly where it came from, since this app does not own either.
                 _cachedToken = null;
-                if (_usedStoredToken) GitHubDeviceAuth.ClearToken();
+                if (_usedStoredToken)
+                {
+                    AppLog.Warn("Copilot: token rejected (401) - clearing this app's own stored sign-in");
+                    GitHubDeviceAuth.ClearToken();
+                }
+                else
+                {
+                    AppLog.Warn($"Copilot: token rejected (401) - source was {_tokenSource}, not this app's to clear");
+                }
                 return new CopilotStatus { Error = "Sign-in expired", NeedsSignIn = true };
             }
             if (!resp.IsSuccessStatusCode)
@@ -100,6 +122,7 @@ public sealed class CopilotUsageService
                 // it had changed where it was reading from.
                 var source = _tokenSource;
                 _cachedToken = null; // force a refresh next time
+                AppLog.Warn($"Copilot: GitHub returned {(int)resp.StatusCode}");
                 return new CopilotStatus
                 {
                     Error = $"GitHub returned {(int)resp.StatusCode}",
@@ -110,6 +133,13 @@ public sealed class CopilotUsageService
             var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             var status = Parse(json);
             status.TokenSource = _tokenSource;
+
+            // Change-only, and without the plan or org name - see the matching line in
+            // ClaudeLimitsService. The org is the sharper case here: on the work machine the
+            // seat is org-assigned, and the panel composes "<org> · <plan>" from these same
+            // fields, so logging them would put the employer's name in a file the context
+            // menu invites the user to attach to a public issue.
+            AppLog.Change("copilot.state", $"Copilot: poll ok - {status.Quotas.Count} quota bucket(s) reported");
             return status;
         }
         catch (OperationCanceledException)
@@ -118,6 +148,7 @@ public sealed class CopilotUsageService
         }
         catch (Exception ex)
         {
+            AppLog.Error("Copilot: usage poll failed", ex);
             return new CopilotStatus { Error = ex.Message, TokenSource = _tokenSource };
         }
     }
@@ -187,6 +218,7 @@ public sealed class CopilotUsageService
             {
                 _usedStoredToken = false;
                 _tokenSource = CopilotTokenSource.EnvironmentVariable;
+                AppLog.Info($"Copilot: token resolved via {name}");
                 return _cachedToken = v.Trim();
             }
         }
@@ -197,6 +229,7 @@ public sealed class CopilotUsageService
         {
             _usedStoredToken = false;
             _tokenSource = CopilotTokenSource.GitHubCli;
+            AppLog.Info("Copilot: token resolved via the gh CLI's own sign-in");
             return _cachedToken = cli;
         }
 
@@ -206,6 +239,7 @@ public sealed class CopilotUsageService
         {
             _usedStoredToken = true;
             _tokenSource = CopilotTokenSource.OwnSignIn;
+            AppLog.Info("Copilot: token resolved via this app's own sign-in");
             return _cachedToken = stored;
         }
 

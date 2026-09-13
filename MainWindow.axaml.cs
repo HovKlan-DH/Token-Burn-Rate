@@ -119,6 +119,9 @@ public partial class MainWindow : Window
         if (this.FindControl<MenuItem>("OpenConfigFolderItem") is { } openConfigFolder)
             openConfigFolder.Click += (_, _) => _vm.OpenConfigurationFolder();
 
+        if (this.FindControl<MenuItem>("OpenLogFileItem") is { } openLogFile)
+            openLogFile.Click += (_, _) => _vm.OpenLogFile();
+
         if (this.FindControl<MenuItem>("ProjectPageItem") is { } projectPage)
             projectPage.Click += (_, _) => _vm.OpenProjectPage();
 
@@ -243,6 +246,10 @@ public partial class MainWindow : Window
 
             if (_vm.AutoUpdate)
                 Services.UpdateService.CheckOnLaunch(_vm.UpdateIncludeAlpha, _vm.UpdateIncludeBeta);
+            else
+                // Logged so a "it never updates" report is not ambiguous between the check
+                // failing and the check never having been asked for.
+                Services.AppLog.Info("Update: skipped - auto-update is turned off");
         };
     }
 

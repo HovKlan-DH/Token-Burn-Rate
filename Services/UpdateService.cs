@@ -1,5 +1,4 @@
 using System;
-using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Velopack;
@@ -84,9 +83,6 @@ public static class UpdateService
         {
             var maxTier = MaxTierRequested(includeAlpha, includeBeta);
 
-            // TEMPORARY diagnostics while chasing why Linux/AppImage never updates - remove
-            // once that's root-caused. Writes unconditionally (not just on error) so a
-            // silent early-return is visible too.
             DiagLog($"start: maxTier={maxTier}");
 
             // Ask the source for the widest pool (every tier CI ever tags) and then filter
@@ -154,31 +150,26 @@ public static class UpdateService
         }
         catch (Exception ex)
         {
-            DiagLog($"exception: {ex}");
-
             // Offline, GitHub rate limit, unpackaged dev build: none of it should affect the
             // widget, and there is nothing actionable to tell the user. Recorded rather than
-            // silently dropped so a "never updates" report has something to go on.
+            // silently dropped so a "never updates" report has something to go on - in the
+            // shared log for the summary, and in CrashLog for the full stack trace.
+            AppLog.Error("Update: check failed", ex);
             CrashLog.Record(ex, "update check");
         }
     }
 
-    // TEMPORARY: mirrors CrashLog's beside-the-exe/%LOCALAPPDATA% fallback so this shows up next
-    // to the crash logs the user already knows to look for. Remove alongside the DiagLog
-    // calls above once the Linux/AppImage no-update issue is root-caused.
-    private static void DiagLog(string message)
-    {
-        try
-        {
-            var dir = Path.GetDirectoryName(AppState.Path);
-            var path = string.IsNullOrWhiteSpace(dir)
-                ? "Token-Burn-Rate.update-diag.log"
-                : Path.Combine(dir, "Token-Burn-Rate.update-diag.log");
-            File.AppendAllText(path, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {message}{Environment.NewLine}");
-        }
-        catch
-        {
-            // Diagnostics must never themselves crash the update check.
-        }
-    }
+    /// <summary>
+    /// Routes the update check's running commentary into the same log everything else uses
+    /// (see <see cref="AppLog"/>).
+    ///
+    /// This used to write its own "update-diag" side-file, added while chasing why the Linux
+    /// AppImage never updated. It stays - but in the shared log rather than a file of its
+    /// own, because a silent self-update that restarts the app is the single likeliest cause
+    /// of the "it went blank / it restarted itself" report the shared log exists to answer,
+    /// and a user sending that log in should not have to know to attach a second one.
+    ///
+    /// Written unconditionally, not just on error, so a silent early return is visible too.
+    /// </summary>
+    private static void DiagLog(string message) => AppLog.Info($"Update: {message}");
 }
