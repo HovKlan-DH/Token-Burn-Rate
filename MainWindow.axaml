@@ -24,6 +24,16 @@
     <conv:HeaderTipConverter x:Key="HeaderTip"/>
     <conv:ColourBrushConverter x:Key="Brush"/>
 
+    <!-- Font Awesome Free 6 "thumbtack" (solid), as path geometry rather than a bundled
+         webfont: it stays monochrome alongside the close cross, and cannot render as a
+         missing-glyph box off Windows the way a Segoe MDL2 icon code would. Attribution for
+         the CC BY 4.0 licence it ships under is in README.md - the geometry is redistributed
+         in every build, so the obligation travels with it, not with a font file.
+         Deliberately the only pin icon: "thumbtack-slash" is not this pin with a line added
+         but a separately drawn, much smaller silhouette, so swapping between the two resized
+         the pin along with the state. MainViewModel.PinOpacity carries the state instead. -->
+    <StreamGeometry x:Key="ThumbtackIcon">M32 32C32 14.3 46.3 0 64 0L320 0c17.7 0 32 14.3 32 32s-14.3 32-32 32l-29.5 0 11.4 148.2c36.7 19.9 65.7 53.2 79.5 94.7l1 3c3.3 9.8 1.6 20.5-4.4 28.8s-15.7 13.3-26 13.3L32 352c-10.3 0-19.9-4.9-26-13.3s-7.7-19.1-4.4-28.8l1-3c13.8-41.5 42.8-74.8 79.5-94.7L93.5 64 64 64C46.3 64 32 49.7 32 32zM160 384l64 0 0 96c0 17.7-14.3 32-32 32s-32-14.3-32-32l0-96z</StreamGeometry>
+
     <!-- One template for all three panels. They differed only in the accent colour and in
          whether the caption reddens with the bar, so both now travel on the bar itself
          (Accent, WarnCaption) rather than being three near-identical copies to keep in
@@ -250,13 +260,20 @@
           </Button>
         </StackPanel>
         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
-          <Button Name="PinButton" Padding="5,1" FontSize="11"
+          <!-- MinHeight matches the close button's text line: the icon alone is 11px where
+               the cross's glyph line is 17, and without it the pin became a 13px-tall target
+               sitting inside the DragHandle, so a near-miss started a window drag instead of
+               toggling the pin. -->
+          <Button Name="PinButton" Padding="5,1" MinHeight="17"
                   Background="Transparent" Foreground="#8A8F98" BorderThickness="0"
                   Cursor="Hand" ToolTip.Tip="{Binding PinTooltip}">
-            <!-- The pin glyph renders taller than the close cross, so its centre sits
-                 lower; the negative bottom margin lifts it onto the same line. -->
-            <TextBlock Text="{Binding PinGlyph}" Opacity="{Binding PinOpacity}"
-                       VerticalAlignment="Center" Margin="0,0,0,3"/>
+            <!-- See the ThumbtackIcon resource for what this glyph is and why it is geometry.
+                 The Viewbox is the single scaling authority - the Path takes no size or
+                 Stretch of its own, so the true geometry bounds are what gets fitted. -->
+            <Viewbox Width="11" Height="11" Stretch="Uniform">
+              <Path Data="{StaticResource ThumbtackIcon}" Fill="#8A8F98"
+                    Opacity="{Binding PinOpacity}"/>
+            </Viewbox>
           </Button>
           <Button Name="CloseButton" Content="✕" Padding="6,1" FontSize="10"
                   Background="Transparent" Foreground="#8A8F98" BorderThickness="0"

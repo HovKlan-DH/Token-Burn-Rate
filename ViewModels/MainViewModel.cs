@@ -1107,14 +1107,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
     }
 
-    /// <summary>
-    /// The pin is drawn as a plain text glyph so it stays monochrome alongside the close
-    /// button. Emoji pushpins would render in colour, and Segoe MDL2 icon codes would be a
-    /// missing-glyph box off Windows.
+    /// <summary>Dimmed when unpinned, so the state reads at a glance. The pin glyph itself is
+    /// the ThumbtackIcon geometry in MainWindow.axaml; brightness is the whole of the state
+    /// it shows, deliberately - see that resource for why there is no second, slashed icon.
     /// </summary>
-    public string PinGlyph => "◉";     // fisheye: a filled dot inside a ring
-
-    /// <summary>Dimmed when unpinned, so the state reads at a glance.</summary>
     public double PinOpacity => _pinned ? 1.0 : 0.35;
 
     public string PinTooltip => _pinned

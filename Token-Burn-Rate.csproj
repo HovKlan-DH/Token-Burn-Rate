@@ -9,7 +9,7 @@
 	<Copyright>©2026 Dennis Helligsø</Copyright>
 
 	<AssemblyVersion>1.0.0</AssemblyVersion>
-	<InformationalVersion>1.0.0-beta.9</InformationalVersion>
+	<InformationalVersion>1.0.0-beta.10</InformationalVersion>
 
 	<!-- Must stay below the two properties they read: MSBuild evaluates a PropertyGroup
 	     top-to-bottom, so placing these first silently resolved FileVersion to empty and
@@ -51,6 +51,15 @@
     <!-- Embedded so Window.Icon can load it at runtime; ApplicationIcon above only
          stamps the .exe, which is a separate mechanism. -->
     <AvaloniaResource Include="Assets\icon.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Carries the CC BY 4.0 attribution for the Font Awesome pin geometry (see the
+         ThumbtackIcon resource in MainWindow.axaml) into the built assembly. The artwork is
+         redistributed in every installer, where the repo's README does not reach, so the
+         notice has to travel with the binary itself. -->
+    <AssemblyMetadata Include="ThirdPartyNotices"
+                      Value="Pin icon: &quot;thumbtack&quot; from Font Awesome Free 6 (https://fontawesome.com), licensed CC BY 4.0." />
   </ItemGroup>
 
   <ItemGroup>

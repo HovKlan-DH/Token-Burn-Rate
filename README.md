@@ -105,3 +105,9 @@ sign in.
 - Registers a per-user autostart entry (`HKCU` on Windows) if left enabled; never writes to
   machine-wide (`HKLM`) locations.
 - Project is full open source: [github.com/HovKlan-DH/Token-Burn-Rate](https://github.com/HovKlan-DH/Token-Burn-Rate).
+
+## Credits
+
+The pin icon is the "thumbtack" glyph from [Font Awesome](https://fontawesome.com) Free 6,
+used under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The icon artwork is
+unmodified; it is embedded as path geometry rather than as a font file.
