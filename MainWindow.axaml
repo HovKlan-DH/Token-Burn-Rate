@@ -31,12 +31,16 @@
          x, and bottom alignment lines the text up with the bar band rather than with the
          caption above it. -->
     <DataTemplate x:Key="BarTemplate" x:DataType="vm:BarViewModel">
+      <!-- The bar sets its own height - caption, gap, band, and room for the today marker to
+           stand proud at both ends (see UsageBar.MeasureOverride) - so it follows the system
+           UI font rather than a number here that a taller font would break. The label and
+           value bottom-align to the grid, so their margins carry the marker's bottom slack. -->
       <Grid Margin="0,0,0,6" ColumnDefinitions="Auto,*,64"
             Opacity="{Binding IsEnabled, Converter={StaticResource DimOpacity}}">
         <TextBlock Grid.Column="0" Text="{Binding Label}" Classes="barlabel"
-                   VerticalAlignment="Bottom" Margin="0,0,8,-3"
+                   VerticalAlignment="Bottom" Margin="0,0,8,0"
                    Width="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).LabelWidth}"/>
-        <conv:UsageBar Grid.Column="1" Height="18" VerticalAlignment="Bottom"
+        <conv:UsageBar Grid.Column="1" VerticalAlignment="Bottom"
                        Fraction="{Binding Fraction}"
                        Caption="{Binding DetailText}"
                        Track="#3A3D44"
@@ -47,7 +51,7 @@
                        TodayMarkerIndex="{Binding TodayMarkerIndex}"
                        MarkerAccentBrush="#F85149"/>
         <TextBlock Grid.Column="2" Text="{Binding ValueText}" Classes="barvalue"
-                   VerticalAlignment="Bottom" Margin="8,0,0,-4"
+                   VerticalAlignment="Bottom" Margin="8,0,0,-1"
                    HorizontalAlignment="Right"
                    Foreground="{Binding ValueColour, Converter={StaticResource Brush}}"/>
       </Grid>

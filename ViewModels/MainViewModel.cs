@@ -162,11 +162,7 @@ public sealed class BarViewModel : INotifyPropertyChanged
     /// whole week rather than only the days elapsed so far. See <see cref="TodayMarkerIndex"/>
     /// for which one is "today"; null on every other bar, where the track is left plain.
     /// </summary>
-    public IReadOnlyList<double>? Markers
-    {
-        get => _markers;
-        set { if (Set(ref _markers, value)) PaceChanged(); }
-    }
+    public IReadOnlyList<double>? Markers => _markers;
 
     private int _todayMarkerIndex = -1;
 
@@ -176,10 +172,28 @@ public sealed class BarViewModel : INotifyPropertyChanged
     /// yet. An index past the last entry is not an error either: on the week's final workday
     /// the boundary is the bar's own right edge, which already marks it.
     /// </summary>
-    public int TodayMarkerIndex
+    public int TodayMarkerIndex => _todayMarkerIndex;
+
+    /// <summary>
+    /// Sets the tick marks and which of them is "today" as one change.
+    ///
+    /// Read-only individually and written only through here because
+    /// <see cref="IsAheadOfPace"/> is derived from both together: two separate setters each
+    /// announcing their own change would publish an intermediate state - the new list paired
+    /// with the old index - and a shrinking list makes that pairing out of range, so the pace
+    /// colour resolves against a boundary that belongs to neither poll.
+    /// </summary>
+    public void SetMarkers(IReadOnlyList<double>? markers, int todayIndex)
     {
-        get => _todayMarkerIndex;
-        set { if (Set(ref _todayMarkerIndex, value)) PaceChanged(); }
+        var changed = !ReferenceEquals(_markers, markers) || _todayMarkerIndex != todayIndex;
+        if (!changed) return;
+
+        _markers = markers;
+        _todayMarkerIndex = todayIndex;
+
+        OnPropertyChanged(nameof(Markers));
+        OnPropertyChanged(nameof(TodayMarkerIndex));
+        PaceChanged();
     }
 
     /// <summary>
@@ -203,10 +217,11 @@ public sealed class BarViewModel : INotifyPropertyChanged
             var marker = markers[_todayMarkerIndex];
             if (double.IsNaN(marker) || double.IsInfinity(marker)) return false;
 
-            // Clamped exactly as UsageBar.DrawMarkers clamps before positioning the tick, so
-            // the boundary tested here is always the boundary actually drawn. Without it an
-            // out-of-range marker would pin the tick to the bar's edge while this compared
-            // against the raw number, reddening a row whose fill visibly falls short of it.
+            // Must match UsageBar.DrawMarkers' clamp of the same fraction: that one decides
+            // where the tick is drawn, this one decides what the fill is compared against,
+            // and they have to be the same number. Out of range they would disagree - the
+            // tick pinned to the bar's edge while this tested the raw value - reddening a row
+            // whose fill visibly falls short of the tick. Change one, change the other.
             marker = Math.Clamp(marker, 0, 1);
 
             return _fraction > marker;
@@ -1448,23 +1463,20 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     var l = limits.Limits[i];
                     var bar = ClaudeBars[i];
 
-                    // Markers before Fraction: setting Fraction announces the pace colours,
-                    // which are derived from the fraction *and* the today marker. Assigning it
-                    // first would resolve those colours against the previous poll's marker set
-                    // - a different window, and after a midnight rollover a different day - so
-                    // the row could paint one frame of the wrong colour on every poll.
+                    // Markers before Fraction, so every read of the pace colours in between
+                    // sees one poll's values rather than this poll's fraction against the
+                    // last one's boundary. Both are set inside a single dispatcher pass, so
+                    // this orders the notifications, not the painting.
                     var isWeekly = IsWeeklyLimit(l.Kind);
                     if (isWeekly)
                     {
                         var (markers, todayIndex) = RollingWeekTodayMarkers(l.ResetsAt);
-                        bar.Markers = markers;
-                        bar.TodayMarkerIndex = todayIndex;
+                        bar.SetMarkers(markers, todayIndex);
                         bar.MarkerWindowEnd = l.ResetsAt;
                     }
                     else
                     {
-                        bar.Markers = null;
-                        bar.TodayMarkerIndex = -1;
+                        bar.SetMarkers(null, -1);
                         bar.MarkerWindowEnd = null;
                     }
 
@@ -1585,10 +1597,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Set(PacingBars[0], pacing.DayFraction, pacing.DayPercent,
             pacing.UsedToday, pacing.PerDayAllowance, "today");
 
+        // Markers before Set, which assigns Fraction - the same ordering the Claude week bar's
+        // poll uses, and for the same reason: the pace colours are derived from the fraction
+        // and the today marker together (see BarViewModel.IsAheadOfPace).
+        PacingBars[1].SetMarkers(
+            WeekMarkers(pacing.WorkdaysInWeek), pacing.WorkdayIndexInWeek - 1);
         Set(PacingBars[1], pacing.WeekFraction, pacing.WeekPercent,
             pacing.UsedThisWeek, pacing.WeekBudget, "this week");
-        PacingBars[1].Markers = WeekMarkers(pacing.WorkdaysInWeek);
-        PacingBars[1].TodayMarkerIndex = pacing.WorkdayIndexInWeek - 1;
 
         Set(PacingBars[2], pacing.MonthFraction, pacing.MonthPercent,
             pacing.UsedThisPeriod, pacing.Entitlement, "this month");
@@ -1973,8 +1988,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         bar.IsEnabled = false;
         bar.IsOverBudget = false;
         bar.IsUnlimited = false;
-        bar.Markers = null;
-        bar.TodayMarkerIndex = -1;
+        bar.SetMarkers(null, -1);
         bar.MarkerWindowEnd = null;
         bar.ResetsAt = null;
     }
@@ -2496,8 +2510,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             if (bar.MarkerWindowEnd is not { } end) continue;
 
             var (markers, todayIndex) = RollingWeekTodayMarkers(end);
-            bar.Markers = markers;
-            bar.TodayMarkerIndex = todayIndex;
+            bar.SetMarkers(markers, todayIndex);
         }
 
         // The pacing week bar carries a today marker too, and its index is derived from the

@@ -68,6 +68,10 @@ public sealed class UsageBar : Control
         AffectsRender<UsageBar>(FractionProperty, FillProperty, TrackProperty, CornerProperty,
             CaptionProperty, CaptionBrushProperty, CaptionHighlightBrushProperty,
             MarkersProperty, TodayMarkerIndexProperty, MarkerAccentBrushProperty);
+
+        // Gaining or losing a caption changes how tall the row needs to be - see
+        // MeasureOverride - which a render invalidation alone would not pick up.
+        AffectsMeasure<UsageBar>(CaptionProperty);
     }
 
     public double Fraction
@@ -200,19 +204,45 @@ public sealed class UsageBar : Control
             text = _cachedText;
         }
 
-        // Without a caption this is a plain slim bar. With one, the control becomes the
-        // row's caption strip: the caption sits directly above the fill band, so colour
-        // never runs through the words.
+        // The control is the row's caption strip: the caption sits directly above the fill
+        // band, so colour never runs through the words. A bar with no caption keeps the same
+        // band in the same place and simply draws no text above it.
         //
-        // The band is pinned to the bottom of the control rather than centred, which lets
-        // the row bottom-align the label and the value to line up with the bar itself
-        // instead of with the caption above it.
-        const double gap = 3;
-        var barHeight = hasCaption ? 3.0 : h;
+        // The band sits near the bottom of the control rather than centred, which lets the
+        // row bottom-align the label and the value to line up with the bar itself instead of
+        // with the caption above it.
+        //
+        // It stops short of the very bottom by the today marker's overshoot, so that marker
+        // can stand equally proud above and below the band and still sit inside the control:
+        // pinned flush, a symmetric marker would have to overflow, and holding it back inside
+        // would push it visibly off-centre on the band it marks.
+        //
+        // The inset is unconditional, not just on bars that draw a marker. Every bar in a
+        // panel is the same height, so insetting only some of them would step their bands out
+        // of line with each other - the SESSION band sitting 3px below the WEEK one.
+        // The band is the same 3px whether or not this bar has a caption. It used to fill the
+        // control when the caption was empty, which is reachable in a healthy panel - a plan
+        // reporting fewer quota buckets than there are bars leaves the surplus ones Reset,
+        // and Reset blanks the caption (see MainViewModel) - so one bar drew as a solid block
+        // beside its siblings' thin bands rather than as an empty row of the same shape.
+        const double gap = CaptionGap;
+        const double bottomInset = TodayMarkerOvershoot;
+        const double barHeight = BandHeight;
         var textHeight = text?.Height ?? 0;
 
-        var barTop = hasCaption ? Math.Max(textHeight + gap, h - barHeight) : 0;
-        var textTop = Math.Max(0, barTop - gap - textHeight);
+        // Pinned to the bottom, never to the caption. An earlier version took the larger of
+        // "below the caption" and "bottom-aligned", which quietly handed the marker's
+        // reserved space to a caption taller than the control was designed around - the
+        // system UI font is whatever the OS supplies (see the Typeface above), so a 13px
+        // caption on Linux or macOS pushed the band down and the marker out of the control
+        // entirely, with nothing clipping it. Squeezing the caption is the right trade: it
+        // already ellipsises, while the marker has nowhere to go.
+        var barTop = Math.Max(0, h - barHeight - bottomInset);
+
+        // Measured from the marker's top, not the band's, so the accented tick clears the
+        // caption by the same gap the band does. Against the band alone the marker ate the
+        // whole gap and its first pixel landed on the caption's last.
+        var textTop = Math.Max(0, barTop - TodayMarkerOvershoot - gap - textHeight);
         var radius = Math.Min(Corner, barHeight / 2);
 
         if (Track is { } track)
@@ -277,21 +307,13 @@ public sealed class UsageBar : Control
             var tickHeight = isCurrent ? barHeight + TodayMarkerOvershoot * 2 : barHeight;
             var pen = isCurrent ? AccentPen(MarkerAccentBrush) : DiscreteMarkerPen;
 
-            // Centred on the band, then held inside the control. The band is pinned to the
-            // bottom (see Render), so an overshoot taller than the band would otherwise hang
-            // below the control entirely - nothing here clips, and it would land in the row's
-            // margin rather than being cut off.
+            // Centred on the band, never nudged. Render reserves the room below for the
+            // overshoot (see bottomInset there), so this stays inside the control without a
+            // clamp - and a clamp is what would make the marker sit visibly off-centre on the
+            // very band it is marking.
             var y0 = barTop + (barHeight - tickHeight) / 2;
-            var y1 = y0 + tickHeight;
-            if (y1 > Bounds.Height)
-            {
-                var shift = y1 - Bounds.Height;
-                y0 -= shift;
-                y1 -= shift;
-            }
-            if (y0 < 0) y0 = 0;
 
-            context.DrawLine(pen, new Point(x, y0), new Point(x, y1));
+            context.DrawLine(pen, new Point(x, y0), new Point(x, y0 + tickHeight));
         }
     }
 
@@ -301,6 +323,52 @@ public sealed class UsageBar : Control
     /// is the only place it is reliably legible - see <see cref="DrawMarkers"/>.
     /// </summary>
     private const double TodayMarkerOvershoot = 3;
+
+    /// <summary>The fill band's own thickness, under the caption.</summary>
+    private const double BandHeight = 3;
+
+    /// <summary>Space between the caption and the top of whatever is drawn below it.</summary>
+    private const double CaptionGap = 3;
+
+    /// <summary>
+    /// The height the row actually needs: the caption, a gap, and the band with room for the
+    /// today marker to stand proud at both ends.
+    ///
+    /// Measured rather than set in XAML so the two cannot drift apart. The geometry is all
+    /// derived from constants in this file, and a template carrying its own Height would go
+    /// silently wrong the moment one of them changed - the symptom being a marker drawn
+    /// outside the control, or a caption the marker touches.
+    /// </summary>
+    protected override Size MeasureOverride(Size availableSize)
+    {
+        var caption = Caption;
+        var textHeight = string.IsNullOrEmpty(caption) ? 0 : CaptionHeight();
+
+        var height = textHeight
+            + (textHeight > 0 ? CaptionGap : 0)
+            + TodayMarkerOvershoot * 2
+            + BandHeight;
+
+        var width = double.IsInfinity(availableSize.Width) ? 0 : availableSize.Width;
+        return new Size(width, height);
+    }
+
+    /// <summary>
+    /// The caption's line height at the size <see cref="Render"/> shapes it in. Measured from
+    /// a bare typeface rather than the cached FormattedText, which does not exist yet on the
+    /// first measure pass and is built against a width this pass is still deciding.
+    /// </summary>
+    private static double CaptionHeight()
+    {
+        var probe = new FormattedText(
+            "0",
+            System.Globalization.CultureInfo.CurrentCulture,
+            FlowDirection.LeftToRight,
+            new Typeface(FontFamily.Default),
+            9,
+            Brushes.Gray);
+        return probe.Height;
+    }
 
     private static readonly IPen DiscreteMarkerPen =
         new Pen(new SolidColorBrush(Color.FromArgb(220, 255, 255, 255)), 1);
