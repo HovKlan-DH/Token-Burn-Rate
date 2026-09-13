@@ -76,21 +76,49 @@ public sealed class BarViewModel : INotifyPropertyChanged
         set
         {
             if (!Set(ref _isOverBudget, value)) return;
-            OnPropertyChanged(nameof(FillColour));
-            OnPropertyChanged(nameof(CaptionColour));
-            OnPropertyChanged(nameof(CaptionHighlightColour));
-            OnPropertyChanged(nameof(ValueColour));
+            WarningColoursChanged();
         }
+    }
+
+    /// <summary>
+    /// Announces every colour derived from the row's warning state. Both inputs to that state
+    /// - <see cref="IsOverBudget"/> and <see cref="IsAheadOfPace"/> - raise the same set, so
+    /// they share one method: two hand-kept lists would drift the moment a fifth colour was
+    /// added to one and not the other, and the symptom would be a bar painting the wrong
+    /// colour until some unrelated property happened to change.
+    /// </summary>
+    private void WarningColoursChanged()
+    {
+        OnPropertyChanged(nameof(FillColour));
+        OnPropertyChanged(nameof(CaptionColour));
+        OnPropertyChanged(nameof(CaptionHighlightColour));
+        OnPropertyChanged(nameof(ValueColour));
     }
 
     // The three colours a row is drawn in, resolved here rather than in the template. The
     // rule is one line each and identical for all three panels, which is what lets the
     // panels share a single template instead of repeating the same converter twelve times.
 
-    /// <summary>Red past the allowance, the panel's own accent inside it.</summary>
-    public string FillColour => _isOverBudget ? OverColour : Accent;
+    /// <summary>
+    /// The two states that redden a row, treated as one: the allowance is spent, or the
+    /// spending has outrun the calendar (see <see cref="IsAheadOfPace"/>). Both mean the same
+    /// thing to someone glancing at the widget - more has gone than should have by now - so
+    /// they are drawn identically rather than given two reds to tell apart.
+    /// </summary>
+    private bool IsWarning => _isOverBudget || IsAheadOfPace;
 
-    /// <summary>Red only where the caption is the figure that went over - see <see cref="WarnCaption"/>.</summary>
+    /// <summary>Red past the allowance or ahead of pace, the panel's own accent inside both.</summary>
+    public string FillColour => IsWarning ? OverColour : Accent;
+
+    /// <summary>
+    /// Red only where the caption is the figure that went over - see <see cref="WarnCaption"/>.
+    ///
+    /// Deliberately keyed on <see cref="IsOverBudget"/> alone rather than the full warning
+    /// state: the caption carrying red is what the "⚠" prefix accompanies, and that prefix is
+    /// written from the spent test at the point the caption is composed. Reddening here for a
+    /// bar that is merely ahead of pace would print a red caption with no warning sign beside
+    /// it, indistinguishable from a genuine overspend except by reading the numbers.
+    /// </summary>
     public string CaptionColour => _isOverBudget && WarnCaption ? OverColour : MutedColour;
 
     /// <summary>
@@ -105,7 +133,7 @@ public sealed class BarViewModel : INotifyPropertyChanged
         => _isOverBudget && WarnCaption ? OverColour : HighlightColour;
 
     /// <summary>The percentage or count, which reddens on every panel.</summary>
-    public string ValueColour => _isOverBudget ? OverColour : TextColour;
+    public string ValueColour => IsWarning ? OverColour : TextColour;
 
     /// <summary>Red, chosen to stay legible on the dark background the widget uses.</summary>
     private const string OverColour = "#F85149";
@@ -116,7 +144,12 @@ public sealed class BarViewModel : INotifyPropertyChanged
     public double Fraction
     {
         get => _fraction;
-        set { Set(ref _fraction, value); OnPropertyChanged(nameof(Percent)); }
+        set
+        {
+            if (!Set(ref _fraction, value)) return;
+            OnPropertyChanged(nameof(Percent));
+            PaceChanged();
+        }
     }
 
     public double Percent => Fraction * 100;
@@ -129,7 +162,11 @@ public sealed class BarViewModel : INotifyPropertyChanged
     /// whole week rather than only the days elapsed so far. See <see cref="TodayMarkerIndex"/>
     /// for which one is "today"; null on every other bar, where the track is left plain.
     /// </summary>
-    public IReadOnlyList<double>? Markers { get => _markers; set => Set(ref _markers, value); }
+    public IReadOnlyList<double>? Markers
+    {
+        get => _markers;
+        set { if (Set(ref _markers, value)) PaceChanged(); }
+    }
 
     private int _todayMarkerIndex = -1;
 
@@ -139,7 +176,52 @@ public sealed class BarViewModel : INotifyPropertyChanged
     /// yet. An index past the last entry is not an error either: on the week's final workday
     /// the boundary is the bar's own right edge, which already marks it.
     /// </summary>
-    public int TodayMarkerIndex { get => _todayMarkerIndex; set => Set(ref _todayMarkerIndex, value); }
+    public int TodayMarkerIndex
+    {
+        get => _todayMarkerIndex;
+        set { if (Set(ref _todayMarkerIndex, value)) PaceChanged(); }
+    }
+
+    /// <summary>
+    /// Whether the fill has run past the midnight that ends today - the whole allowance this
+    /// far into the window is already spent, even though the window itself has room left.
+    ///
+    /// The marker is the boundary the day in progress runs out at (see
+    /// <see cref="TodayMarkerIndex"/>), so a fill beyond it is spending that has outrun the
+    /// calendar rather than the budget. Bars with no "today" to mark - every bar outside the
+    /// two week views, and a window whose day in progress is bounded by the bar's own edge -
+    /// have no pace to be ahead of and report false.
+    /// </summary>
+    public bool IsAheadOfPace
+    {
+        get
+        {
+            var markers = _markers;
+            if (markers is null) return false;
+            if (_todayMarkerIndex < 0 || _todayMarkerIndex >= markers.Count) return false;
+
+            var marker = markers[_todayMarkerIndex];
+            if (double.IsNaN(marker) || double.IsInfinity(marker)) return false;
+
+            // Clamped exactly as UsageBar.DrawMarkers clamps before positioning the tick, so
+            // the boundary tested here is always the boundary actually drawn. Without it an
+            // out-of-range marker would pin the tick to the bar's edge while this compared
+            // against the raw number, reddening a row whose fill visibly falls short of it.
+            marker = Math.Clamp(marker, 0, 1);
+
+            return _fraction > marker;
+        }
+    }
+
+    /// <summary>
+    /// Raised whenever an input to <see cref="IsAheadOfPace"/> changes - the pace half of the
+    /// warning state, announced through the same shared list the spent half uses.
+    /// </summary>
+    private void PaceChanged()
+    {
+        OnPropertyChanged(nameof(IsAheadOfPace));
+        WarningColoursChanged();
+    }
 
     /// <summary>
     /// The reset instant the current <see cref="Markers"/> were derived from, on the bars
@@ -148,6 +230,23 @@ public sealed class BarViewModel : INotifyPropertyChanged
     /// MainViewModel.RefreshDayMarkers. Null on every bar whose ticks are not date-derived.
     /// </summary>
     public DateTimeOffset? MarkerWindowEnd { get; set; }
+
+    /// <summary>
+    /// The instant this bar's caption counts down to, kept so the countdown can be re-derived
+    /// between polls - see MainViewModel.RefreshResetCaptions.
+    ///
+    /// The caption is a live figure ("resets in 4h 55m") but <see cref="DetailText"/> holds a
+    /// string, so without this it is frozen at whatever the last poll rendered. That is not a
+    /// small window: once every active limit is spent the Claude poll is suppressed until the
+    /// reset (see MainViewModel._claudeSkipUntil), which on the week bar can be days - so an
+    /// idle widget would sit on a countdown hours out of date.
+    ///
+    /// Null whenever the caption must not animate: bars whose caption is not a countdown
+    /// (both Copilot panels), and Claude bars whose figures have gone stale behind a failed
+    /// poll - a live countdown over stale percentages would keep running past its own reset
+    /// and then claim "resetting" indefinitely, asserting something the panel cannot know.
+    /// </summary>
+    public DateTimeOffset? ResetsAt { get; set; }
 
     public event PropertyChangedEventHandler? PropertyChanged;
     private void OnPropertyChanged([CallerMemberName] string? n = null)
@@ -413,9 +512,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     /// <summary>
     /// The colour the tray ring should draw the source bar in. "accent" (the default) takes
-    /// the bar's own FillColour, which already flips to the over-budget red past 100%; an
-    /// explicit #RRGGBB overrides the accent but not that flip - past 100% the ring is red
-    /// whatever this setting says.
+    /// the bar's own FillColour, which also carries the red it flips to past 100% or when the
+    /// bar runs ahead of pace; an explicit #RRGGBB overrides the accent but not a spent
+    /// allowance - past 100% the ring is red whatever this setting says.
+    ///
+    /// Deliberately gated on IsOverBudget rather than the bar's full warning state: a spent
+    /// quota is worth overriding a colour the user chose, while merely being ahead of pace -
+    /// which the week bars report for much of any normal week - is not.
     /// </summary>
     public string ResolveIconColour(BarViewModel source)
     {
@@ -1344,11 +1447,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 {
                     var l = limits.Limits[i];
                     var bar = ClaudeBars[i];
-                    bar.Label = l.Label;
-                    bar.Fraction = l.Fraction;
-                    bar.ValueText = $"{l.Percent:0}%";
-                    bar.DetailText = l.ResetText;
-                    bar.IsEnabled = true;
+
+                    // Markers before Fraction: setting Fraction announces the pace colours,
+                    // which are derived from the fraction *and* the today marker. Assigning it
+                    // first would resolve those colours against the previous poll's marker set
+                    // - a different window, and after a midnight rollover a different day - so
+                    // the row could paint one frame of the wrong colour on every poll.
                     var isWeekly = IsWeeklyLimit(l.Kind);
                     if (isWeekly)
                     {
@@ -1363,6 +1467,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
                         bar.TodayMarkerIndex = -1;
                         bar.MarkerWindowEnd = null;
                     }
+
+                    bar.Label = l.Label;
+                    bar.Fraction = l.Fraction;
+                    bar.ValueText = $"{l.Percent:0}%";
+                    bar.DetailText = l.ResetText;
+                    bar.ResetsAt = l.ResetsAt;
+                    bar.IsEnabled = true;
 
                     // No warning glyph here: this caption is the reset time, not a percentage,
                     // so a "⚠" in front of it would read as a problem with the reset. The bar
@@ -1398,6 +1509,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
             // actually needs the user - or one with nothing behind it - gives the panel over
             // to the explainer.
             var keepStaleBars = !limits.IsAvailable && limits.IsTransientFailure && _claudeHasPolled;
+
+            // Stop the countdown on bars the panel is only still showing because the poll
+            // failed. The figures beside it are frozen at the last successful read, and a
+            // caption that kept counting would run past its own reset and then sit on
+            // "resetting" forever - claiming a reset the panel has no way to have seen.
+            if (keepStaleBars)
+                foreach (var bar in ClaudeBars) bar.ResetsAt = null;
 
             ClaudeAvailable = limits.IsAvailable || keepStaleBars;
             _claudeFound = limits.IsAvailable;
@@ -1858,6 +1976,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         bar.Markers = null;
         bar.TodayMarkerIndex = -1;
         bar.MarkerWindowEnd = null;
+        bar.ResetsAt = null;
     }
 
     /// <summary>
@@ -2380,7 +2499,46 @@ public sealed class MainViewModel : INotifyPropertyChanged
             bar.Markers = markers;
             bar.TodayMarkerIndex = todayIndex;
         }
+
+        // The pacing week bar carries a today marker too, and its index is derived from the
+        // date inside Build rather than from a reset instant - so it cannot be recomputed
+        // here directly and is rebuilt from the last known status instead, exactly as the
+        // "Workdays in a week" menu does. Without this its marker, and the pace colour now
+        // derived from it, would name yesterday until the next Copilot poll.
+        if (_lastCopilotStatus is { } status) RefreshPacing(status);
     }
+
+    /// <summary>
+    /// Re-derives the "resets in 4h 55m" captions from the clock, so they count down while
+    /// the widget sits idle rather than freezing at whatever the last poll rendered.
+    ///
+    /// Needed because a poll is exactly what does not happen here: once every active limit is
+    /// spent, <see cref="_claudeSkipUntil"/> suppresses the Claude poll until the reset, which
+    /// on the seven-day window can be days away - so the countdown would stand still for the
+    /// whole skip while the time it names kept approaching.
+    ///
+    /// The caption has minute resolution, so this rebuilds at most once a minute rather than
+    /// on every tick. Leaving it to BarViewModel.Set's string comparison would suppress the
+    /// repaint but not the work that produced the string - several allocations and a culture
+    /// lookup per bar per second, on the UI thread, for a figure that had not changed.
+    /// </summary>
+    private void RefreshResetCaptions()
+    {
+        var minute = new DateTimeOffset(
+            DateTimeOffset.UtcNow.Ticks / TimeSpan.TicksPerMinute * TimeSpan.TicksPerMinute,
+            TimeSpan.Zero);
+        if (minute == _resetCaptionsBuiltFor) return;
+        _resetCaptionsBuiltFor = minute;
+
+        foreach (var bar in ClaudeBars)
+        {
+            if (bar.ResetsAt is { } resetsAt)
+                bar.DetailText = ClaudeLimit.ResetTextFor(resetsAt);
+        }
+    }
+
+    /// <summary>The minute <see cref="RefreshResetCaptions"/> last rebuilt for.</summary>
+    private DateTimeOffset? _resetCaptionsBuiltFor;
 
     /// <summary>
     /// Updates the countdown to the next refresh. Both services are refreshed by one timer,
@@ -2390,6 +2548,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public void TickCountdowns()
     {
         RefreshDayMarkers();
+        RefreshResetCaptions();
 
         var d = _nextRefresh - DateTimeOffset.UtcNow;
         if (d <= TimeSpan.Zero)

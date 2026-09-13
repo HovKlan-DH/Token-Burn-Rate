@@ -243,8 +243,13 @@ public sealed class UsageBar : Control
     /// Discrete tick marks along the track, e.g. the workday boundaries within the My Pace
     /// week bar - spanning the whole week, so ticks for days still ahead sit past the fill
     /// alongside those already behind it. The entry at <see cref="TodayMarkerIndex"/> stands
-    /// for "today" and is drawn taller and in <see cref="MarkerAccentBrush"/>; the rest are
-    /// shorter, muted ticks that read as calendar structure without competing with the fill.
+    /// for "today" and is drawn both taller and thicker, in <see cref="MarkerAccentBrush"/>;
+    /// the rest are shorter, muted ticks that read as calendar structure without competing
+    /// with the fill.
+    ///
+    /// The today marker carries its weight through size rather than colour alone: it shares
+    /// the red the fill itself turns once the bar is past that marker, so on the run it most
+    /// needs to be legible against there is no colour contrast to rely on.
     /// </summary>
     private void DrawMarkers(DrawingContext context, double w, double barTop, double barHeight)
     {
@@ -262,15 +267,40 @@ public sealed class UsageBar : Control
             m = m < 0 ? 0 : m > 1 ? 1 : m;
 
             var isCurrent = i == todayIndex;
-            var x = Math.Round(w * m) + 0.5;   // half-pixel for a crisp 1px line
 
-            var tickHeight = isCurrent ? barHeight + 4 : barHeight;
+            // Both widths are odd (1 and 3) and a pen is centred on its coordinate, so the
+            // half-pixel offset puts either one's edges exactly on pixel boundaries. An even
+            // or fractional width would need a whole coordinate instead - which is why the
+            // today marker is 3px rather than the 2.5 the step up from 1.5 suggests.
+            var x = Math.Round(w * m) + 0.5;
+
+            var tickHeight = isCurrent ? barHeight + TodayMarkerOvershoot * 2 : barHeight;
             var pen = isCurrent ? AccentPen(MarkerAccentBrush) : DiscreteMarkerPen;
 
+            // Centred on the band, then held inside the control. The band is pinned to the
+            // bottom (see Render), so an overshoot taller than the band would otherwise hang
+            // below the control entirely - nothing here clips, and it would land in the row's
+            // margin rather than being cut off.
             var y0 = barTop + (barHeight - tickHeight) / 2;
-            context.DrawLine(pen, new Point(x, y0), new Point(x, y0 + tickHeight));
+            var y1 = y0 + tickHeight;
+            if (y1 > Bounds.Height)
+            {
+                var shift = y1 - Bounds.Height;
+                y0 -= shift;
+                y1 -= shift;
+            }
+            if (y0 < 0) y0 = 0;
+
+            context.DrawLine(pen, new Point(x, y0), new Point(x, y1));
         }
     }
+
+    /// <summary>
+    /// How far the today marker stands proud of the bar band at each end. It shares its
+    /// colour with the fill once the bar runs past it, so the part above and below the band
+    /// is the only place it is reliably legible - see <see cref="DrawMarkers"/>.
+    /// </summary>
+    private const double TodayMarkerOvershoot = 3;
 
     private static readonly IPen DiscreteMarkerPen =
         new Pen(new SolidColorBrush(Color.FromArgb(220, 255, 255, 255)), 1);
@@ -288,7 +318,7 @@ public sealed class UsageBar : Control
         var brush = accent ?? Brushes.OrangeRed;
         if (_cachedAccentPen is null || !ReferenceEquals(_cachedAccentBrush, brush))
         {
-            _cachedAccentPen = new Pen(brush, 1.5);
+            _cachedAccentPen = new Pen(brush, 3);
             _cachedAccentBrush = brush;
         }
         return _cachedAccentPen;

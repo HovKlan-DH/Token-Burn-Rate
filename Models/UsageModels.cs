@@ -81,39 +81,43 @@ public sealed class ClaudeLimit
     /// full, when it comes back is the one thing worth reading in the row, and it is
     /// otherwise nine-point grey among the words that carry no information.
     /// </summary>
-    public string ResetText
+    public string ResetText => ResetTextFor(ResetsAt);
+
+    /// <summary>
+    /// <see cref="ResetText"/> for a bare instant, so a caller holding only the reset time can
+    /// re-derive the countdown as the clock moves - see MainViewModel.RefreshResetCaptions.
+    /// Everything the text depends on is that one instant plus the current time.
+    /// </summary>
+    public static string ResetTextFor(DateTimeOffset? resetsAt)
     {
-        get
-        {
-            if (ResetsAt is not { } r) return "not yet started";
-            var now = DateTimeOffset.UtcNow;
-            if (r - now <= TimeSpan.Zero) return "resetting";
+        if (resetsAt is not { } r) return "not yet started";
+        var now = DateTimeOffset.UtcNow;
+        if (r - now <= TimeSpan.Zero) return "resetting";
 
-            // Round first, then derive everything below from the rounded instant. Rounding only
-            // the printed clock time let the two halves of one sentence disagree: a 14:58 reset
-            // rounds to "15:00" while the countdown still truncated the exact 1h58m, and a 23:58
-            // reset rounded forward into the next calendar day, printing a weekday the reset
-            // never falls on. One instant in, one consistent sentence out.
-            var localReset = RoundToNearest5Minutes(r.ToLocalTime());
-            var localNow = now.ToLocalTime();
-            var d = localReset - localNow;
-            if (d <= TimeSpan.Zero) return "resetting";
+        // Round first, then derive everything below from the rounded instant. Rounding only
+        // the printed clock time let the two halves of one sentence disagree: a 14:58 reset
+        // rounds to "15:00" while the countdown still truncated the exact 1h58m, and a 23:58
+        // reset rounded forward into the next calendar day, printing a weekday the reset
+        // never falls on. One instant in, one consistent sentence out.
+        var localReset = RoundToNearest5Minutes(r.ToLocalTime());
+        var localNow = now.ToLocalTime();
+        var d = localReset - localNow;
+        if (d <= TimeSpan.Zero) return "resetting";
 
-            var culture = System.Globalization.CultureInfo.CurrentCulture;
+        var culture = System.Globalization.CultureInfo.CurrentCulture;
 
-            // A reset landing on a different calendar day gets a weekday label even once the
-            // countdown itself drops under 24h (e.g. the week bar late on its reset-eve) - the
-            // session bar never crosses midnight within its own window, so it always takes the
-            // bare-time branch below. Both the comparison and the label read localReset, so the
-            // branch can never be decided on a different day than the one it prints.
-            var when = localReset.Date != localNow.Date
-                ? $"{localReset:dddd} {localReset.ToString("t", culture)}"
-                : localReset.ToString("t", culture);
+        // A reset landing on a different calendar day gets a weekday label even once the
+        // countdown itself drops under 24h (e.g. the week bar late on its reset-eve) - the
+        // session bar never crosses midnight within its own window, so it always takes the
+        // bare-time branch below. Both the comparison and the label read localReset, so the
+        // branch can never be decided on a different day than the one it prints.
+        var when = localReset.Date != localNow.Date
+            ? $"{localReset:dddd} {localReset.ToString("t", culture)}"
+            : localReset.ToString("t", culture);
 
-            if (d.TotalDays >= 1) return $"resets in {Em($"{(int)d.TotalDays}d")} {Em($"{d.Hours}h")} ({when})";
-            if (d.TotalHours >= 1) return $"resets in {Em($"{(int)d.TotalHours}h")} {Em($"{d.Minutes}m")} ({when})";
-            return $"resets in {Em($"{d.Minutes}m")} ({when})";
-        }
+        if (d.TotalDays >= 1) return $"resets in {Em($"{(int)d.TotalDays}d")} {Em($"{d.Hours}h")} ({when})";
+        if (d.TotalHours >= 1) return $"resets in {Em($"{(int)d.TotalHours}h")} {Em($"{d.Minutes}m")} ({when})";
+        return $"resets in {Em($"{d.Minutes}m")} ({when})";
     }
 
     private static string Em(string s) => UsageText.Highlight(s);
