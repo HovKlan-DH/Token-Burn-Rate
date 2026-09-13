@@ -1,9 +1,9 @@
 # Token Burn Rate
 
-A small always-on-top widget that shows your live **Claude** and **GitHub Copilot** usage,
-so you always know how much you have left.
+A small always-on-top application that shows your live **Claude** and **GitHub Copilot**
+usage, so you always know how much you have left.
 
-![The widget](docs/screenshot.png)
+![The application](docs/screenshot.png)
 
 ## Install
 
@@ -19,12 +19,12 @@ so you always know how much you have left.
 
 2. Run it and follow the installer. No admin rights are needed.
 
-   - **Windows** may show a blue "Windows protected your PC" screen, because the app isn't
-     signed. Click **More info**, then **Run anyway**.
+   - **Windows** may show a blue "Windows protected your PC" screen, because the application
+     isn't signed. Click **More info**, then **Run anyway**.
    - **macOS** may block the first launch as coming from an unidentified developer. Right-click
-     the app, choose **Open**, then confirm.
+     the application, choose **Open**, then confirm.
 
-3. The widget opens automatically and stays on top of your other windows.
+3. The application opens automatically and stays on top of your other windows.
 
 That's it — updates after this happen by themselves in the background.
 
@@ -33,15 +33,15 @@ That's it — updates after this happen by themselves in the background.
 ### Claude
 
 Click the Claude panel and choose **Sign in to Claude**. A browser window opens on
-claude.ai; approve it there, then copy the code it shows you back into the widget and click
-**Sign in**.
+claude.ai; approve it there, then copy the code it shows you back into the application and
+click **Sign in**.
 
-This is a one-time step. The widget keeps you signed in after that.
+This is a one-time step. The application keeps you signed in after that.
 
 ### GitHub Copilot
 
-Click **Sign in to GitHub** in the Copilot panel. The widget shows a short code and opens
-GitHub's device sign-in page — enter the code there and approve.
+Click **Sign in to GitHub** in the Copilot panel. The application shows a short code and
+opens GitHub's device sign-in page — enter the code there and approve.
 
 If you're already signed in to the GitHub CLI on your computer, this panel works right away
 with no extra steps.
@@ -74,10 +74,10 @@ over 100% and the number keeps counting, so you can see by how much.
 
 - **Move it** — drag the top bar anywhere on screen; it reopens there next time.
 - **Refresh now** — click the small circular arrow, top right.
-- **Pin on top** — the pin icon toggles whether the widget stays above other windows.
-- **Close to tray** — closing the widget keeps it running quietly in the background; click
-  its icon in the system tray to bring it back.
-- **Right-click** the widget for more options — show or hide individual panels, change
+- **Pin on top** — the pin icon toggles whether the application stays above other windows.
+- **Close to tray** — closing the application keeps it running quietly in the background;
+  click its icon in the system tray to bring it back.
+- **Right-click** the application for more options — show or hide individual panels, change
   colors and text size, and other preferences.
 
 If a panel you're not signed in to isn't shown, that's expected — it appears as soon as you
