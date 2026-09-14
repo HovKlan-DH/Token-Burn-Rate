@@ -101,7 +101,20 @@ sign in.
   `github.com` - no code, prompts, or repository content is ever accessed.
 - Each user signs in individually with their own Claude and GitHub account; there is no
   shared or service account, and no credentials are centrally managed.
-- Sign-in tokens are stored locally per user (`%LocalAppData%` on Windows), encrypted at-rest on Windows and owner-only readable elsewhere.
+- Sign-in tokens are stored locally per user, one file each for Claude and GitHub, under
+  the local application data folder (`%LocalAppData%\Token-Burn-Rate` on Windows;
+  `~/.local/share/Token-Burn-Rate` on Linux/macOS) - never a roaming or machine-wide
+  location.
+  - The **Claude** token is encrypted at rest on Windows (DPAPI, current-user scope) -
+    unreadable to another account on the same machine, and useless if the profile is
+    copied elsewhere. On macOS/Linux it falls back to plaintext with owner-only file
+    permissions, the same protection Claude Code's own CLI uses there.
+  - The **GitHub** token is plaintext with owner-only file permissions on every OS - it
+    carries only `read:user` scope and is a single token the user can revoke directly from
+    github.com/settings/applications at any time.
+  - Neither token can be used to spend the user's model quota, access repository or prompt
+    content, or mint further credentials - see [Sign in](#sign-in) for the scopes each
+    grants.
 - Registers a per-user autostart entry (`HKCU` on Windows) if left enabled; never writes to
   machine-wide (`HKLM`) locations.
 - Project is full open source: [github.com/HovKlan-DH/Token-Burn-Rate](https://github.com/HovKlan-DH/Token-Burn-Rate).

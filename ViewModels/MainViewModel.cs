@@ -1591,7 +1591,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         UpdatePacingSubtitle();
 
         Set(PacingBars[0], pacing.DayFraction, pacing.DayPercent,
-            pacing.UsedToday, pacing.PerDayAllowance, "today");
+            pacing.UsedToday, pacing.PerDayAllowance);
 
         // Markers before Set, which assigns Fraction - the same ordering the Claude week bar's
         // poll uses, and for the same reason: the pace colours are derived from the fraction
@@ -1599,12 +1599,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
         PacingBars[1].SetMarkers(
             WeekMarkers(pacing.WorkdaysInWeek), pacing.WorkdayIndexInWeek - 1);
         Set(PacingBars[1], pacing.WeekFraction, pacing.WeekPercent,
-            pacing.UsedThisWeek, pacing.WeekBudget, "this week");
+            pacing.UsedThisWeek, pacing.WeekBudget);
 
         Set(PacingBars[2], pacing.MonthFraction, pacing.MonthPercent,
-            pacing.UsedThisPeriod, pacing.Entitlement, "this month");
+            pacing.UsedThisPeriod, pacing.Entitlement);
 
-        static void Set(BarViewModel bar, double fraction, double percent, double used, double budget, string what)
+        static void Set(BarViewModel bar, double fraction, double percent, double used, double budget)
         {
             // Spending past the allowance is meaningful, so the number keeps climbing even
             // though the bar itself stops at full.
@@ -1616,7 +1616,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             // draw identically, and the overspend was legible only in the small print.
             var over = IsSpent(percent);
             bar.IsOverBudget = over;
-            bar.DetailText = $"{Warning(over)}{used:0} of {budget:0} tokens used {what}";
+            bar.DetailText = $"{Warning(over)}{used:0} of {budget:0} tokens used";
             bar.IsEnabled = true;
         }
     }
