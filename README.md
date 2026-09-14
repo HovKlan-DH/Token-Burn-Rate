@@ -4,7 +4,7 @@ A small always-on-top application that shows your live **Claude** and **GitHub C
 usage, so you always know how much you have left. It can be customized to suit private usage and 
 work usage, where you can setup different "workdays for a week".
 
-<img width="533" height="595" alt="image" src="https://github.com/user-attachments/assets/55b26acf-5219-4f3e-aa7e-57537a49d8f4" />
+<img width="450" height="502" alt="image" src="https://github.com/user-attachments/assets/5f25463e-a39b-4286-befe-ef7e124df6c9" />
 
 
 ## Install
