@@ -1,6 +1,6 @@
 # Token Burn Rate
 
-A small always-on-top application that shows your live **Claude** and **GitHub Copilot**
+A small cross-platform _always-on-top_ desktop application that shows your live **Claude** and **GitHub Copilot**
 usage, so you always know how much you have left. It can be customized to suit private usage and 
 work usage, where you can setup different "workdays for a week".
 
