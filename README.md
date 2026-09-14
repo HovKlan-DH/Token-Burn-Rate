@@ -53,7 +53,7 @@ with no extra steps.
 
 ### Claude
 
-![Claude panel](docs/claude-panel.png)
+<img width="480" height="182" alt="image" src="https://github.com/user-attachments/assets/4a1143a6-6bfe-46b3-b8c4-9a380dfa4661" />
 
 Your **session** (5-hour window) and **weekly** usage, each with a bar and a countdown to when it resets.
 These are the exact same numbers shown on the "Usage" page at `claude.ai`.
