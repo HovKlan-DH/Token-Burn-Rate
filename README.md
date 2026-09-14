@@ -60,14 +60,14 @@ These are the exact same numbers shown on the "Usage" page at `claude.ai`.
 
 ### GitHub Copilot
 
-![Copilot panel](docs/copilot-panel.png)
+<img width="480" height="225" alt="image" src="https://github.com/user-attachments/assets/02288300-b56f-4d18-86c3-6608b18053c2" />
 
 Your monthly **completions**, **chat**, and **premium request** usage. Anything not included
 in your plan is shown greyed out; anything unlimited shows as ∞.
 
 ### My Pace
 
-![My Pace panel](docs/pacing-panel.png)
+<img width="480" height="246" alt="image" src="https://github.com/user-attachments/assets/f5e1abbe-18d7-44b5-b276-705c83f6b1bb" />
 
 A daily budget for your Copilot usage: how much you've used **today**, **this week**, and
 **this month**, against a fair daily allowance calculated from what's left in the period. Go
