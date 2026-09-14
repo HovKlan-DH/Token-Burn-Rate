@@ -1,7 +1,8 @@
 # Token Burn Rate
 
 A small always-on-top application that shows your live **Claude** and **GitHub Copilot**
-usage, so you always know how much you have left.
+usage, so you always know how much you have left. It can be customized to suit private usage and 
+work usage, where you can setup different "workdays for a week".
 
 ![The application](docs/screenshot.png)
 
@@ -53,8 +54,8 @@ with no extra steps.
 
 ![Claude panel](docs/claude-panel.png)
 
-Your **session** and **weekly** usage, each with a bar and a countdown to when it resets.
-These are the exact same numbers shown on the Usage page at claude.ai.
+Your **session** (5-hour window) and **weekly** usage, each with a bar and a countdown to when it resets.
+These are the exact same numbers shown on the "Usage" page at `claude.ai`.
 
 ### GitHub Copilot
 
@@ -73,51 +74,48 @@ over 100% and the number keeps counting, so you can see by how much.
 
 ## Everyday use
 
-- **Move it** - drag the top bar anywhere on screen; it reopens there next time.
-- **Refresh now** - click the small circular arrow, top right.
+- **Weekly limit** - you should see the weekly limit as "_how much can I do within this week_", so
+  if you have a workplace account, then you could setup a week to have 5 days, at you are then entitled to use the entire weekly limit within those 5 days.
+- **Move visible window** - drag the top bar anywhere on screen; it reopens there next time.
+- **Refresh now** - click the small circular arrow, top right, to instant-update usage.
 - **Pin on top** - the pin icon toggles whether the application stays above other windows.
 - **Close to tray** - closing the application keeps it running quietly in the background;
   click its icon in the system tray to bring it back.
 - **Right-click** the application for more options - show or hide individual panels, change
   colors and text size, and other preferences.
-
-If a panel you're not signed in to isn't shown, that's expected - it appears as soon as you
-sign in.
+- **Auto-update** - it will per default auto-update to the newest stable version, if any newer version will be released.
 
 ## Information for IT organizations
 
 - No administrator rights are required to install or run - it installs per-user.
 - Silent/unattended install is supported: run the Windows installer with `--silent`.
 - Installs to the current user's local application data folder, not `Program Files`.
-- Self-updates automatically from GitHub Releases; this can be turned off manually per machine (by the user) from
+- Self-updates automatically from GitHub; this can be turned off manually by the user from
   the right-click menu (`Advanced` → `Auto-update to newest version`).
-- The Windows installer and executable are code-signed (YubiKey-backed certificate); a
-  SmartScreen warning, if any, is reputation-based and temporary, not a sign of tampering.
+- The Windows installer and executable are code-signed; a SmartScreen warning, if any, is
+  reputation-based and temporary, not a sign of tampering.
 - macOS builds are not signed or notarized and require a right-click **Open** to bypass
   Gatekeeper.
-- Outbound HTTPS only, to: `api.anthropic.com` (Claude), `api.github.com` and
+- Communicates via outbound HTTPS only, to: `api.anthropic.com` (Claude), `api.github.com` and
   `github.com` (Copilot), and `mailscan.dk` (a mandatory version check-in, no usage data).
 - Reads only usage figures already visible to the signed-in user on `claude.ai` and
   `github.com` - no code, prompts, or repository content is ever accessed.
-- Each user signs in individually with their own Claude and GitHub account; there is no
-  shared or service account, and no credentials are centrally managed.
+- Each user signs in individually with their own Claude and GitHub account.
 - Sign-in tokens are stored locally per user, one file each for Claude and GitHub, under
-  the local application data folder (`%LocalAppData%\Token-Burn-Rate` on Windows;
-  `~/.local/share/Token-Burn-Rate` on Linux/macOS) - never a roaming or machine-wide
-  location.
-  - The **Claude** token is encrypted at rest on Windows (DPAPI, current-user scope) -
+  the local application data folder (`%LocalAppData%\Token-Burn-Rate` on Windows and
+  `~/.local/share/Token-Burn-Rate` on Linux/macOS).
+  - The **Claude** token is encrypted at-rest on Windows (DPAPI, current-user scope) -
     unreadable to another account on the same machine, and useless if the profile is
     copied elsewhere. On macOS/Linux it falls back to plaintext with owner-only file
-    permissions, the same protection Claude Code's own CLI uses there.
+    permissions.
   - The **GitHub** token is plaintext with owner-only file permissions on every OS - it
     carries only `read:user` scope and is a single token the user can revoke directly from
-    github.com/settings/applications at any time.
+    `github.com/settings/applications` at any time.
   - Neither token can be used to spend the user's model quota, access repository or prompt
     content, or mint further credentials - see [Sign in](#sign-in) for the scopes each
     grants.
-- Registers a per-user autostart entry (`HKCU` on Windows) if left enabled; never writes to
-  machine-wide (`HKLM`) locations.
-- Project is full open source: [github.com/HovKlan-DH/Token-Burn-Rate](https://github.com/HovKlan-DH/Token-Burn-Rate).
+- Application registers a per-user autostart entry (`HKCU` on Windows).
+- Project is full open source.
 
 ## Credits
 
