@@ -459,8 +459,11 @@ public sealed record ClaudeTokens(
                 ? e.GetInt64()
                 : 8 * 60 * 60;          // the documented 8-hour default, if it is ever omitted
 
-            // The plan name is not a top-level field on every response shape; where it is
-            // absent the panel simply shows no plan rather than a wrong one.
+            // The plan name is not a field the token endpoint returns for every account: a
+            // live check confirmed a real response with no subscription_type anywhere in it,
+            // at top level or under account. Where it is absent the panel simply shows no
+            // plan rather than a wrong one - getting it back would mean finding and calling a
+            // separate profile endpoint, not fixing this parse.
             var plan = Str(root, "subscription_type")
                        ?? (root.TryGetProperty("account", out var acct) && acct.ValueKind == JsonValueKind.Object
                            ? Str(acct, "subscription_type")

@@ -1900,15 +1900,19 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// <summary>Opens the project page in the default browser.</summary>
     public void OpenProjectPage() => TryOpenBrowser(ProjectUrl);
 
-    /// <summary>Opens the folder holding the running executable, in the OS file browser.</summary>
+    /// <summary>
+    /// Opens the folder holding the running executable, in the OS file browser. Nothing the
+    /// user owns lives there - for a Velopack install it is the versioned app-x.y.z directory
+    /// the next silent auto-update replaces wholesale, so anything dropped in it is lost.
+    /// Settings, logs and tokens are all under <see cref="OpenConfigurationFolder"/>.
+    /// </summary>
     public void OpenApplicationFolder() => OpenFolder(ApplicationFolder);
 
     /// <summary>
     /// Opens the folder AppState.Path writes the state file into, in the OS file browser -
-    /// the same folder CrashLog drops its logs beside. That is the executable's own folder
-    /// for a portable copy, but for a Velopack install (where the exe's folder is a
-    /// versioned, unwritable app-x.y.z directory) it is %LOCALAPPDATA%/~/.local/share instead - so
-    /// this must follow AppState's resolution rather than assuming beside-the-exe.
+    /// the same folder AppLog drops its logs beside, and ClaudeTokenStore/GitHubDeviceAuth
+    /// keep their token files in. Always %LOCALAPPDATA%/~/.local/share, distinct from the
+    /// executable's own folder - see AppState's class comment.
     /// </summary>
     public void OpenConfigurationFolder() => OpenFolder(ConfigurationFolder);
 
@@ -1916,20 +1920,16 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private static string? ApplicationFolder =>
         System.IO.Path.GetDirectoryName(Environment.ProcessPath);
 
+    /// <summary>
+    /// Whether the application folder resolves to anything. False only where ProcessPath is
+    /// empty - a single-file host on some platforms, or a stripped environment - and the menu
+    /// entry hides rather than sitting there doing nothing when clicked.
+    /// </summary>
+    public bool HasApplicationFolder => !string.IsNullOrWhiteSpace(ApplicationFolder);
+
     /// <summary>The folder AppState.Path writes the state file into - see OpenConfigurationFolder.</summary>
     private static string? ConfigurationFolder =>
         System.IO.Path.GetDirectoryName(Services.AppState.Path);
-
-    /// <summary>
-    /// Whether the configuration folder needs its own menu entry - false whenever it is the
-    /// same folder as the application's (a portable copy), which is the common case outside
-    /// of a Velopack install.
-    /// </summary>
-    public bool ConfigurationFolderDiffers =>
-        !string.Equals(
-            System.IO.Path.TrimEndingDirectorySeparator(ApplicationFolder ?? string.Empty),
-            System.IO.Path.TrimEndingDirectorySeparator(ConfigurationFolder ?? string.Empty),
-            StringComparison.Ordinal);
 
     /// <summary>
     /// Opens a folder in the OS file browser, or a file in whatever the OS treats its

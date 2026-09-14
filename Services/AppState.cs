@@ -6,21 +6,23 @@ using System.Text.Json.Serialization;
 namespace TokenBurnRate.Services;
 
 /// <summary>
-/// The app's own state, kept in a single JSON file named after the executable and sitting
-/// beside it, so a portable copy carries its history with it.
+/// The app's own state, kept in a single JSON file in the per-user local app data folder
+/// (%LOCALAPPDATA% / ~/.local/share, via SpecialFolder.LocalApplicationData - not
+/// ApplicationData/~/.config, which is for roaming config rather than an app's own data,
+/// and is where Windows and Linux otherwise diverge).
 ///
-/// If that folder cannot be written - a read-only share, or Program Files - the file falls
-/// back to the per-user local app data folder (%LOCALAPPDATA% / ~/.local/share, via
-/// SpecialFolder.LocalApplicationData - not ApplicationData/~/.config, which is for
-/// roaming config rather than an app's own data, and is where Windows and Linux otherwise
-/// diverge), because losing every day's opening balance would break the pacing bars
-/// entirely. The GitHub token deliberately does not live here: it stays in that same
-/// per-user folder with owner-only permissions, since a portable folder may be a USB stick
-/// or a share.
+/// Always this folder, never beside the executable: a Velopack install's exe lives in a
+/// versioned "current"/"app-x.y.z" folder that each update replaces wholesale, so state
+/// written there would be discarded on every auto-update, and a portable copy may sit on a
+/// USB stick or a read-only share. One fixed location keeps this file, its log files (see
+/// AppLog), and the Claude and GitHub token files (see ClaudeOAuth's ClaudeTokenStore and
+/// GitHubDeviceAuth) all in the same place regardless of how the app is launched.
 ///
-/// A Velopack install also uses that folder rather than the beside-the-exe location: there
-/// the exe lives in a versioned "current"/"app-x.y.z" folder that each update replaces
-/// wholesale, so state written beside it would be discarded on every auto-update.
+/// Every build up to 1.0.0-beta.10 wrote beside the executable whenever that folder was
+/// writable, which covered a portable copy and any source build alike - this project
+/// produces an apphost, so `dotnet run` and F5 both resolved to bin/Debug. Those files are
+/// carried over here rather than stranded: see <see cref="ResolvePath"/>, and LegacyPaths
+/// for what losing one would cost.
 /// </summary>
 public sealed class AppState
 {
@@ -208,119 +210,75 @@ public sealed class AppState
     public static string Path => _path.Value;
 
     /// <summary>
-    /// Beside the executable, named after it (Token-Burn-Rate.exe -> Token-Burn-Rate.json),
-    /// unless that directory is not writable or the app is Velopack-installed - see the
-    /// class comment for why an installed build must not write beside its exe.
+    /// Always the per-user local app data folder - see the class comment for why.
+    ///
+    /// Nothing here may throw. This runs inside a <see cref="Lazy{T}"/> factory, which caches
+    /// a thrown exception and rethrows it on every later access rather than retrying, so one
+    /// failure would poison <see cref="Path"/> for the life of the process - and CrashLog
+    /// builds its own path from this, so the crash logger would then throw while recording
+    /// the very crash it was called for. An unusable folder yields a bare filename in the
+    /// working directory instead: degraded, but running and loggable.
     /// </summary>
     private static string ResolvePath()
     {
         try
         {
-            var exe = IsVelopackInstalled ? null : Environment.ProcessPath;
-            if (!string.IsNullOrWhiteSpace(exe))
-            {
-                var dir = System.IO.Path.GetDirectoryName(exe);
-                var name = System.IO.Path.GetFileNameWithoutExtension(exe);
-                if (!string.IsNullOrWhiteSpace(dir) && !string.IsNullOrWhiteSpace(name))
-                {
-                    var candidate = System.IO.Path.Combine(dir, name + ".json");
-                    if (IsWritable(dir)) return candidate;
-                }
-            }
+            var appData = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                AppFolderName);
+            Directory.CreateDirectory(appData);
+
+            var path = System.IO.Path.Combine(appData, "Token-Burn-Rate.json");
+
+            // Two separate migrations, both one-time and best-effort, and the order matters:
+            // the pre-rename file is the older of the two, so the beside-the-exe file gets
+            // first claim on the destination and Adopt's "existing file always wins" leaves
+            // it alone afterwards.
+            LegacyPaths.Adopt(path, BesideExecutablePath());
+            LegacyPaths.Adopt(path, System.IO.Path.Combine(
+                LegacyPaths.LocalAppDataFolder, "TokenBurnRate.json"));
+
+            return path;
         }
         catch (Exception)
         {
-            // Fall through to the per-user location.
+            // LocalApplicationData unavailable (a roaming profile on an unreachable share, a
+            // redirected folder the user has lost rights to) or uncreatable. Returning a
+            // relative name keeps every caller working on a path that at least parses.
+            return "Token-Burn-Rate.json";
         }
+    }
 
-        var appData = System.IO.Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            AppFolderName);
-        Directory.CreateDirectory(appData);
+    /// <summary>
+    /// Where builds up to 1.0.0-beta.10 kept the state file: beside the executable, named
+    /// after it (Token-Burn-Rate.exe -> Token-Burn-Rate.json). Returns an empty string when
+    /// there is no usable process path, which Adopt treats as "nothing to migrate".
+    /// </summary>
+    private static string BesideExecutablePath()
+    {
+        try
+        {
+            var exe = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(exe)) return string.Empty;
 
-        var path = System.IO.Path.Combine(appData, "Token-Burn-Rate.json");
-        LegacyPaths.Adopt(path, System.IO.Path.Combine(
-            LegacyPaths.LocalAppDataFolder, "TokenBurnRate.json"));
-        return path;
+            var dir = System.IO.Path.GetDirectoryName(exe);
+            var name = System.IO.Path.GetFileNameWithoutExtension(exe);
+            if (string.IsNullOrWhiteSpace(dir) || string.IsNullOrWhiteSpace(name)) return string.Empty;
+
+            return System.IO.Path.Combine(dir, name + ".json");
+        }
+        catch (Exception)
+        {
+            return string.Empty;
+        }
     }
 
     /// <summary>
     /// The per-user folder this app owns, under %LOCALAPPDATA% / ~/.local/share. Shared with
-    /// <see cref="GitHubDeviceAuth"/>, which keeps its token in the same folder.
+    /// <see cref="ClaudeOAuth"/>'s ClaudeTokenStore and <see cref="GitHubDeviceAuth"/>, which
+    /// keep their token files in the same folder.
     /// </summary>
     public const string AppFolderName = "Token-Burn-Rate";
-
-    /// <summary>
-    /// Whether this build is running from a Velopack install. Detected from the layout it
-    /// creates - the exe sits in a "current" or "app-x.y.z" folder next to the
-    /// ".velopack" bookkeeping directory - rather than by asking Velopack, so resolving a
-    /// path stays free of package state and cannot throw on an unpackaged build.
-    /// </summary>
-    private static bool IsVelopackInstalled
-    {
-        get
-        {
-            try
-            {
-                var dir = System.IO.Path.GetDirectoryName(Environment.ProcessPath);
-                if (string.IsNullOrWhiteSpace(dir)) return false;
-
-                var parent = Directory.GetParent(dir)?.FullName;
-                return parent is not null && Directory.Exists(System.IO.Path.Combine(parent, ".velopack"));
-            }
-            catch (Exception)
-            {
-                return false;
-            }
-        }
-    }
-
-    /// <summary>
-    /// Probes the directory by creating and deleting a temporary file.
-    ///
-    /// DeleteOnClose is the normal path, but it does not fire when the process is killed -
-    /// and this app is killed outright at logoff - so the probe is also deleted explicitly
-    /// and any leftover from an earlier kill is swept. Probes carry their own prefix rather
-    /// than sharing WriteAtomic's: sweeping on that pattern could delete a temp file another
-    /// instance was mid-write to, which is exactly what the atomic write exists to prevent.
-    /// </summary>
-    private static bool IsWritable(string dir)
-    {
-        try
-        {
-            var probe = System.IO.Path.Combine(dir, $".tbr-probe-{Guid.NewGuid():N}.tmp");
-            using (File.Create(probe, 1, FileOptions.DeleteOnClose)) { }
-            try { if (File.Exists(probe)) File.Delete(probe); } catch (Exception) { }
-
-            SweepStaleProbes(dir);
-            return true;
-        }
-        catch (Exception)
-        {
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Removes probe files a previous kill left behind, so they cannot accumulate beside
-    /// the executable. Best effort throughout: a probe another instance holds open right
-    /// now simply fails to delete and is swept by whichever run comes after it.
-    /// </summary>
-    private static void SweepStaleProbes(string dir)
-    {
-        try
-        {
-            foreach (var stale in Directory.EnumerateFiles(dir, ".tbr-probe-*.tmp"))
-            {
-                try { File.Delete(stale); } catch (Exception) { }
-            }
-        }
-        catch (Exception)
-        {
-            // Enumeration itself can fail on an odd filesystem; the probe already answered
-            // the question this method was called to support.
-        }
-    }
 
     // ---- load / save -------------------------------------------------------------------
 
@@ -453,6 +411,11 @@ public sealed class AppState
 
         // Same directory as the target: File.Replace and a rename are only atomic within
         // one volume, and the temp folder may well be on another.
+        //
+        // Nothing may bulk-delete on this ".tbr-*" pattern: a second instance can be mid-write
+        // to one of these right now, and sweeping it away is exactly the torn state the atomic
+        // write exists to prevent. Each write clears only its own temp file, in the finally
+        // below.
         var temp = System.IO.Path.Combine(dir, $".tbr-{Guid.NewGuid():N}.tmp");
 
         try
@@ -481,7 +444,7 @@ public sealed class AppState
         finally
         {
             // A crash between write and replace leaves the temp file behind; clear it so
-            // they cannot accumulate beside the executable.
+            // they cannot accumulate in the state folder.
             try { if (File.Exists(temp)) File.Delete(temp); } catch (Exception) { }
         }
     }

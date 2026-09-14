@@ -4,8 +4,9 @@ using System.IO;
 namespace TokenBurnRate.Services;
 
 /// <summary>
-/// Carries files over from the paths this app used before it was renamed from
-/// "TokenBurnRate" to "Token-Burn-Rate".
+/// Carries files over from the paths this app used previously. Two moves have happened so
+/// far: the rename from "TokenBurnRate" to "Token-Burn-Rate", and 1.0.0-beta.11 dropping the
+/// beside-the-executable state file in favour of the per-user folder alone (see AppState).
 ///
 /// The rename moved the per-user folder (%LOCALAPPDATA%\TokenBurnRate ->
 /// ...\Token-Burn-Rate) and the state file inside it. Without this, an existing install
@@ -30,12 +31,19 @@ public static class LegacyPaths
     /// <summary>
     /// Moves <paramref name="legacy"/> to <paramref name="current"/> when the new location
     /// has no file yet. An existing file at the destination always wins - it is the newer
-    /// state, and a half-migrated install must never be overwritten by the stale copy.
+    /// state, and a half-migrated install must never be overwritten by the stale copy. That
+    /// also makes repeated calls with different legacy paths safe in sequence: the first one
+    /// to find a file claims the destination and the rest become no-ops.
+    ///
+    /// An empty or whitespace <paramref name="legacy"/> means "this caller has no legacy
+    /// location to offer" and is simply nothing to do, so a caller that cannot work one out
+    /// need not special-case it.
     /// </summary>
     public static void Adopt(string current, string legacy)
     {
         try
         {
+            if (string.IsNullOrWhiteSpace(legacy)) return;
             if (File.Exists(current) || !File.Exists(legacy)) return;
 
             var dir = Path.GetDirectoryName(current);

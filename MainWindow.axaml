@@ -204,14 +204,16 @@
                     IsEnabled="{Binding AutoUpdate}"
                     ToolTip.Tip="Also offer ALPHA builds when checking for updates"/>
           <Separator/>
+          <!-- Hidden when there is no resolvable executable path, since the item would
+               otherwise silently do nothing when clicked. -->
           <MenuItem Name="OpenFolderItem" Header="Open application folder"
-                    ToolTip.Tip="Open the folder holding the executable"/>
-          <!-- Only shown when it differs from the application folder - a Velopack install
-               keeps the state file in %LOCALAPPDATA%/~/.local/share instead, since the exe's
-               own folder is a versioned, unwritable app-x.y.z directory. -->
-          <MenuItem Name="OpenConfigFolderItem" Header="Open configuration folder"
-                    IsVisible="{Binding ConfigurationFolderDiffers}"
-                    ToolTip.Tip="Open the folder holding the state file"/>
+                    IsVisible="{Binding HasApplicationFolder}"
+                    ToolTip.Tip="Open the folder holding the executable - replaced on every update, so nothing here is yours to keep"/>
+          <!-- Always shown: the state file, logs, and both token files live in
+               %LOCALAPPDATA%/~/.local/share, always distinct from the executable's own
+               folder - see AppState's class comment. -->
+          <MenuItem Name="OpenConfigFolderItem" Header="Open config and logs folder"
+                    ToolTip.Tip="Open the folder holding the state file, logs, and sign-in tokens"/>
           <Separator/>
           <MenuItem Name="ProjectPageItem" Header="Project page on GitHub"
                     ToolTip.Tip="https://github.com/HovKlan-DH/Token-Burn-Rate"/>

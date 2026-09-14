@@ -40,7 +40,18 @@ namespace TokenBurnRate
                 // bookkeeping they exist to do.
                 if (!TryAcquireSingleInstance()) return;
 
-                BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+                try
+                {
+                    BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+                }
+                finally
+                {
+                    // Released as soon as the UI is down rather than left to process exit, so
+                    // an auto-update's incoming version does not have to wait out the outgoing
+                    // one's teardown - see TryAcquireSingleInstance for that race. Best effort:
+                    // the OS releases it at exit regardless, so a failure here costs nothing.
+                    ReleaseSingleInstance();
+                }
             }
             catch (Exception ex)
             {
@@ -100,20 +111,38 @@ namespace TokenBurnRate
         }
 
         /// <summary>
+        /// Drops the single-instance claim. Both steps are guarded: ReleaseMutex throws when
+        /// the calling thread does not own the handle, and this runs on the same thread that
+        /// acquired it only because Main is single-threaded throughout - a failure here is
+        /// not worth reporting with the process already on its way out, and the OS releases
+        /// the handle at exit either way.
+        /// </summary>
+        private static void ReleaseSingleInstance()
+        {
+            var mutex = _singleInstanceMutex;
+            if (mutex is null) return;
+
+            _singleInstanceMutex = null;
+
+            try { mutex.ReleaseMutex(); } catch (Exception) { }
+            try { mutex.Dispose(); } catch (Exception) { }
+        }
+
+        /// <summary>
         /// Scoped to the install location, so a build run from the working tree and an
         /// installed copy do not lock each other out - debugging while the real one sits in
-        /// the tray is routine, and a single global name would make one of them refuse to
-        /// start with no visible reason. Velopack's versioned folder is deliberately excluded
-        /// from the path so an update does not hand the new version a different name and let
-        /// it run alongside the old one.
+        /// the tray is routine (CLAUDE.md documents `dotnet run` as the local loop), and a
+        /// single global name would make one of them refuse to start with no visible reason.
+        ///
+        /// Deliberately not the state file's folder: that is now one fixed per-user path for
+        /// every launch (see AppState), so it would collapse every copy onto one name. The
+        /// exe's folder is used instead, with Velopack's versioned "app-x.y.z" segment
+        /// replaced by its parent, so an update does not hand the new version a different
+        /// name and let it run alongside the old one.
         /// </summary>
         private static string SingleInstanceName()
         {
-            // The state file's folder, which already answers this exact question: it is beside
-            // the exe for a portable copy, and the fixed per-user folder for a Velopack
-            // install, whose versioned exe directory changes on every update.
-            var location = System.IO.Path.GetDirectoryName(Services.AppState.Path)
-                           ?? Services.AppState.AppFolderName;
+            var location = InstallLocation() ?? Services.AppState.AppFolderName;
 
             // Hashed rather than embedded: a path may hold characters the name cannot (a
             // backslash makes Windows read the rest as a namespace) and can outrun the length
@@ -129,6 +158,37 @@ namespace TokenBurnRate
             return OperatingSystem.IsWindows()
                 ? $"Local\\{Services.AppState.AppFolderName}-{suffix}"
                 : $"{Services.AppState.AppFolderName}-{suffix}";
+        }
+
+        /// <summary>
+        /// The folder that identifies this copy of the app. Normally the executable's own,
+        /// but for a Velopack install that folder is the versioned "current"/"app-x.y.z"
+        /// directory each update replaces - so the install root above it is used instead,
+        /// keeping the name stable across an update. The layout is read directly (the
+        /// ".velopack" bookkeeping directory sits beside the versioned folder) rather than
+        /// asked of Velopack, so this stays free of package state and cannot throw on an
+        /// unpackaged build.
+        /// </summary>
+        private static string? InstallLocation()
+        {
+            try
+            {
+                var dir = System.IO.Path.GetDirectoryName(Environment.ProcessPath);
+                if (string.IsNullOrWhiteSpace(dir)) return null;
+
+                var parent = System.IO.Directory.GetParent(dir)?.FullName;
+                if (parent is not null &&
+                    System.IO.Directory.Exists(System.IO.Path.Combine(parent, ".velopack")))
+                {
+                    return parent;
+                }
+
+                return dir;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
         }
 
         // Avalonia configuration, don't remove; also used by visual designer.

@@ -72,14 +72,19 @@ publish/
 .idea/
 .vscode/
 
-# The app's own state file, which is written beside the executable and so lands in the
-# repo root whenever the app is run from a source build. It holds this machine's window
-# position and its spending history - never something to publish. The GitHub token is not
-# covered here because it deliberately never lives beside the executable; it stays in
-# %LOCALAPPDATA% with owner-only permissions.
+# The app's own state file. Builds from 1.0.0-beta.11 on keep it under
+# %LOCALAPPDATA%/~/.local/share (see AppState's class comment), but every earlier build
+# wrote it beside the executable - so a working tree that ever ran one still has this file
+# in the repo root, and AppState's migration moves it out only once the new build is run.
+# Keep the rule: it holds this machine's window position and its spending history, never
+# something to publish. The Claude and GitHub token files have always lived in the per-user
+# folder, so they need no rule here.
 /Token-Burn-Rate.json
 
-# Crash reports written beside the executable
+# Crash reports. Now written alongside the state file under %LOCALAPPDATA%/~/.local/share
+# (see CrashLog, which derives the folder from AppState.Path), but pre-beta.11 builds
+# dropped them beside the executable, so a source build's output folder can still hold
+# some.
 *.crash.*.log
 
 # OS and tooling debris

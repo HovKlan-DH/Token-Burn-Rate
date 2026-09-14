@@ -7,7 +7,8 @@ using System.Threading.Tasks;
 namespace TokenBurnRate.Services;
 
 /// <summary>
-/// Writes unhandled exceptions to a file beside the executable, named
+/// Writes unhandled exceptions to a file beside AppState's state file (always
+/// %LOCALAPPDATA%/~/.local/share, never beside the executable), named
 /// <c>{exename}.crash.{yyyyMMddHHmmss}.log</c>, so a crash can be sent on afterwards
 /// rather than vanishing with the process.
 ///
@@ -43,10 +44,10 @@ public static class CrashLog
 
         // Not hooked: AppDomain.CurrentDomain.FirstChanceException. It is the only hook that
         // sees an exception the UI framework catches and swallows, but it fires for every
-        // exception in the process - including the many thrown by design here, from
-        // AppState's writability probe to every ConvertBack - so a handler would be invoked
-        // constantly to do nothing. Add it here temporarily, filtered, if a specific
-        // swallowed exception ever needs chasing.
+        // exception in the process - including the many thrown by design here, every
+        // ConvertBack among them - so a handler would be invoked constantly to do nothing.
+        // Add it here temporarily, filtered, if a specific swallowed exception ever needs
+        // chasing.
     }
 
     /// <summary>
@@ -76,8 +77,8 @@ public static class CrashLog
     }
 
     /// <summary>
-    /// <c>{exename}.crash.{yyyyMMddHHmmss}.log</c> beside the executable, falling back to
-    /// the same %LOCALAPPDATA% folder the state file uses when that directory is read-only.
+    /// <c>{exename}.crash.{yyyyMMddHHmmss}.log</c> in the same folder as the state file - see
+    /// AppState.
     /// </summary>
     private static string BuildPath()
     {
@@ -89,8 +90,7 @@ public static class CrashLog
 
         var fileName = $"{name}.crash.{stamp}.log";
 
-        // Sit beside the state file: that resolution already handles a read-only program
-        // folder, so both land in the same place and are found together.
+        // Sit beside the state file, so both land in the same place and are found together.
         var dir = Path.GetDirectoryName(AppState.Path);
         return string.IsNullOrWhiteSpace(dir) ? fileName : Path.Combine(dir, fileName);
     }
