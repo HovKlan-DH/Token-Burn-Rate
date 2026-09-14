@@ -115,6 +115,10 @@ over 100% and the number keeps counting, so you can see by how much.
   - Neither token can be used to spend the user's model quota, access repository or prompt
     content, or mint further credentials - see [Sign in](#sign-in) for the scopes each
     grants.
+- The settings file and logs live in that same per-user folder, separate from
+  wherever the application itself is installed - the right-click menu's `Open application
+  folder` and `Open config and logs folder` open the two respectively. Logs are pruned
+  automatically once older than 48 hours.
 - Application registers a per-user autostart entry (`HKCU` on Windows).
 - Project is full open source.
 
