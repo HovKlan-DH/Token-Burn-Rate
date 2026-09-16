@@ -75,6 +75,16 @@ public sealed class AppState
     public bool? CloseToTray { get; set; }
 
     /// <summary>
+    /// Whether the widget was hidden in the tray at the moment it last stopped running -
+    /// from the close button minimising it, or from the tray icon itself, whichever
+    /// happened last - so the next launch (including one Windows starts at login) can come
+    /// up hidden too instead of always flashing the window on screen first. Absent means
+    /// never set, and the widget defaults to shown - see MainWindow's Opened handler.
+    /// </summary>
+    [JsonPropertyName("hiddenInTray")]
+    public bool? HiddenInTray { get; set; }
+
+    /// <summary>
     /// Whether the "still running in the tray" notice has been shown. It is a one-off: the
     /// first minimise is the only one where the window vanishing is a surprise.
     /// </summary>
@@ -123,6 +133,15 @@ public sealed class AppState
     /// </summary>
     [JsonPropertyName("workDaysPerWeek")]
     public int? WorkDaysPerWeek { get; set; }
+
+    /// <summary>
+    /// Which of the three marker displays the bars use, set from the context menu's
+    /// "Display of markers" - the name of a TokenBurnRate.ViewModels.MarkerDisplayMode
+    /// value ("Daily", "HereAndNow", "None"). Absent, unrecognised, or invalid falls back to
+    /// "Daily" - the original fixed calendar-boundary ticks.
+    /// </summary>
+    [JsonPropertyName("markerDisplayMode")]
+    public string? MarkerDisplayMode { get; set; }
 
     /// <summary>
     /// Seconds between refreshes. Nothing in the UI offers this: it exists for the rare

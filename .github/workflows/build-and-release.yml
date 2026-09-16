@@ -402,25 +402,74 @@ jobs:
             echo "release_name=$VERSION" >> $GITHUB_OUTPUT
           fi
 
+      # Takes ONLY the newest version's notes out of CHANGELOG.md - the section under the
+      # first "# <version>, <date>" header, up to the next one. The whole file used to be
+      # pasted in, so every release body carried the entire history back to the first one.
+      #
+      # The version header and the "-----" underline beneath it are both dropped: the
+      # release is already titled with its version, so repeating it in the body is noise.
+      #
+      # Matching is on the HEADER POSITION, not on the version string. The workflow's
+      # version comes from the csproj and a release is often built before the changelog's
+      # own "2026-September-?" date placeholder is filled in, so requiring the two to
+      # agree would fail the release over a date the maintainer is still deciding.
+      #
+      # CRLF is stripped first - CHANGELOG.md is maintained on Windows, and a trailing \r
+      # inside the GITHUB_OUTPUT heredoc corrupts the rendered Markdown.
+      #
+      # Only ever reaches a release body for a FULL release; pre-releases substitute their
+      # own fixed one-liner (see "Create GitHub Release" below) and never read this file at
+      # all - mirrors the sibling Classic-Repair-Toolbox workflow this is taken from.
+      - name: Read Changelog and append text
+        id: changelog
+        run: |
+          # Random heredoc delimiter, not a bare "EOF". The body is file content the
+          # maintainer writes, and a changelog line consisting of exactly "EOF" would end
+          # the heredoc early - truncating the release body and feeding whatever followed
+          # back to the runner as further step outputs.
+          delim="EOF_$(openssl rand -hex 16)"
+          {
+            echo "content<<$delim"
+
+            if [ -f "CHANGELOG.md" ]; then
+              sed 's/\r$//' CHANGELOG.md | awk '
+                /^# / { if (++seen > 1) exit; next }
+                seen == 1 && !body && /^-+[[:space:]]*$/ { next }
+                seen == 1 { body = 1; print }
+              ' | sed -e :a -e '/^[[:space:]]*$/{$d;N;ba' -e '}'
+            else
+              echo "No CHANGELOG.md found."
+            fi
+
+            echo ""
+
+            # No pre-release paragraph here. A pre-release never renders this output at all -
+            # "Create GitHub Release" substitutes its own fixed one-liner for that case (see
+            # the note above) - so building one into `content` only ever wrote text nothing
+            # would read.
+            echo "Do note that all versions come with the newest available **.NET 10** embedded (at build time), which means you do not need to install any .NET runtime for this."
+            echo ""
+            echo "You only need to install the **Token Burn Rate** application once, and thereafter you can update directly from inside the application."
+
+            echo "$delim"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: ${{ steps.prerelease_check.outputs.release_name }}
           body: |
-            ${{ steps.prerelease_check.outputs.is_prerelease == 'true' && format('This is a {0} version, and should not be downloaded/used unless if coordinated with the developer.', steps.prerelease_check.outputs.body_label) || format('### Direct downloads for different platforms
+            ${{ steps.prerelease_check.outputs.is_prerelease == 'true' && format('This is a {0} version, and should not be downloaded/used unless if coordinated with the developer.', steps.prerelease_check.outputs.body_label) || format('{0}
+
+            ### Direct downloads for different platforms
             | Platform | File |
             |----------|------|
-            | Windows (x64) | [Token-Burn-Rate-win-Setup.exe](https://github.com/{0}/releases/download/{1}/Token-Burn-Rate-win-Setup.exe) |
-            | Linux (x64) | [Token-Burn-Rate.AppImage](https://github.com/{0}/releases/download/{1}/Token-Burn-Rate.AppImage) |
-            | macOS Apple Silicon (arm64) | [Token-Burn-Rate-osx-arm64-Setup.pkg](https://github.com/{0}/releases/download/{1}/Token-Burn-Rate-osx-arm64-Setup.pkg) |
-            | macOS Intel (x64) | [Token-Burn-Rate-osx-x64-Setup.pkg](https://github.com/{0}/releases/download/{1}/Token-Burn-Rate-osx-x64-Setup.pkg) |
-
-            The Windows installer is code-signed; the macOS installers are not signed or
-            notarized and require a right-click **Open** to bypass Gatekeeper on first launch.
-            Each is installed once per-user (no administrator rights needed); after that the
-            application checks for updates on every launch and updates itself automatically.',
-            github.repository, steps.tag.outputs.tag) }}
+            | Windows (x64) | [Token-Burn-Rate-win-Setup.exe](https://github.com/{1}/releases/download/{2}/Token-Burn-Rate-win-Setup.exe) |
+            | Linux (x64) | [Token-Burn-Rate.AppImage](https://github.com/{1}/releases/download/{2}/Token-Burn-Rate.AppImage) |
+            | macOS Apple Silicon (arm64) | [Token-Burn-Rate-osx-arm64-Setup.pkg](https://github.com/{1}/releases/download/{2}/Token-Burn-Rate-osx-arm64-Setup.pkg) |
+            | macOS Intel (x64) | [Token-Burn-Rate-osx-x64-Setup.pkg](https://github.com/{1}/releases/download/{2}/Token-Burn-Rate-osx-x64-Setup.pkg) |',
+            steps.changelog.outputs.content, github.repository, steps.tag.outputs.tag) }}
           draft: false
           prerelease: ${{ steps.prerelease_check.outputs.is_prerelease == 'true' }}
           files: |

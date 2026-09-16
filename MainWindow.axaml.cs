@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Threading;
@@ -214,12 +214,41 @@ public partial class MainWindow : Window
             if (_opened) return;
             _opened = true;
 
+            // The framework's own StartWithClassicDesktopLifetime calls Show() on this
+            // window unconditionally, so the only way to start hidden is to let that first
+            // Show() happen and immediately undo it here, before the window is composited -
+            // Hide() inside the same Opened this Show() raised does not flash it on screen
+            // in practice. Only the very first launch: once running, HideToTray/
+            // RestoreFromTray are what the user's own clicks drive, and this flag is not
+            // consulted again this session.
+            //
+            // Gated on TraySupported, not just the flag: without a tray (some Linux desktops
+            // ship none) there would be no icon left to bring the window back with, and
+            // CloseToTray/HideToTray are never reachable there for the same reason - see
+            // MainViewModel.TraySupported.
+            var startHidden = _vm.TraySupported && Services.AppState.Load().HiddenInTray == true;
+
             ApplyCursors();     // the visual tree is only complete once the window is open
 
             // The restored position was validated against a screen, but the restored text
             // scale can still have widened the window past that screen's edge - and the
             // ApplyFontScale that applied it ran before there was a screen to check.
+            //
+            // Runs BEFORE the start-hidden HideToTray below, not after. Nudge() clamps the
+            // position against Bounds.Height, which is 0 on a window that was hidden before
+            // its first layout - so the clamp read the window as zero-height, pushed it to
+            // the very bottom of the work area, and HideToTray's own SavePosition persisted
+            // that. Nudging while the window is still shown gives it a real measured height.
             NudgeOntoScreen();
+
+            if (startHidden)
+            {
+                HideToTray(explain: false);
+
+                // HideToTray always writes HiddenInTray = true (see its own comment), which
+                // is exactly what it should already be here - this is not a state change,
+                // just the same hide any other minimise performs.
+            }
 
             _vm.TickCountdowns();
             RunRefresh("initial refresh");
@@ -629,11 +658,16 @@ public partial class MainWindow : Window
     /// process is killed while hidden. Only when it can have moved: hiding a window that
     /// is already hidden, or that has not been shown since the last save, would repeat a
     /// synchronous read-modify-write of the state file on the UI thread for nothing.
+    ///
+    /// AppState.HiddenInTray is recorded unconditionally, even on a redundant hide, so the
+    /// next launch (see StartHiddenIfWasHiddenLast) knows to come up hidden too rather than
+    /// flashing the window on screen before the user hides it again.
     /// </summary>
     private void HideToTray(bool explain)
     {
         if (IsVisible) SavePosition();
         Hide();
+        Services.AppState.Update(a => a.HiddenInTray = true);
 
         // The refresh timer keeps running. This is a monitor: the poll cadence belongs to
         // the app, not to whether anyone is looking, so the figures go on being collected
@@ -664,6 +698,7 @@ public partial class MainWindow : Window
         Show();
         WindowState = WindowState.Normal;
         Activate();
+        Services.AppState.Update(a => a.HiddenInTray = false);
 
         _vm.TickCountdowns();       // the label is as old as the hide; catch it up before it shows
         _countdownTimer.Start();
@@ -807,6 +842,18 @@ public partial class MainWindow : Window
         }
 
         _shuttingDown = true;
+
+        // A real close, whether from ExitApplication (which already set this) or the close
+        // button with CloseToTray off, which reaches here without ever going through it.
+        //
+        // Only cleared when the window was actually shown at this moment: exiting from the
+        // visible window is a "back to normal" quit and the next launch should show again.
+        // Exiting from the tray menu's own "Exit" while the widget was already hidden is
+        // not that - IsVisible is already false there, HiddenInTray already says so (set by
+        // whichever HideToTray got it there), and clearing it here would undo exactly the
+        // state this flag exists to remember, showing the window on the next launch even
+        // though the user never asked to see it again.
+        if (IsVisible) Services.AppState.Update(a => a.HiddenInTray = false);
 
         SavePosition();
         _timer.Stop();

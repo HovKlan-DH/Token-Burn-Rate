@@ -12,6 +12,24 @@ using TokenBurnRate.Services;
 
 namespace TokenBurnRate.ViewModels;
 
+/// <summary>
+/// The three ways the pacing bars can show time passing within their window, set from the
+/// context menu's "Display of markers" - see <see cref="MainViewModel.MarkerDisplayMode"/>.
+/// Persisted by name (AppState.MarkerDisplayMode) rather than as a bare bool now that there
+/// are three states, not two.
+/// </summary>
+public enum MarkerDisplayMode
+{
+    /// <summary>"Daily view in Week" - the original fixed calendar-boundary ticks.</summary>
+    Daily,
+
+    /// <summary>"Here-and-now time in all" - one red marker per bar tracking the clock.</summary>
+    HereAndNow,
+
+    /// <summary>"Show no markers" - the bar draws neither ticks nor a marker.</summary>
+    None,
+}
+
 public sealed class BarViewModel : INotifyPropertyChanged
 {
     private string _label = "";
@@ -197,31 +215,45 @@ public sealed class BarViewModel : INotifyPropertyChanged
     }
 
     /// <summary>
-    /// Whether the fill has run past the midnight that ends today - the whole allowance this
-    /// far into the window is already spent, even though the window itself has room left.
+    /// Whether the fill has run past the pace this bar's marker stands for - the whole
+    /// allowance this far into the window is already spent, even though the window itself
+    /// has room left.
     ///
-    /// The marker is the boundary the day in progress runs out at (see
-    /// <see cref="TodayMarkerIndex"/>), so a fill beyond it is spending that has outrun the
-    /// calendar rather than the budget. Bars with no "today" to mark - every bar outside the
-    /// two week views, and a window whose day in progress is bounded by the bar's own edge -
-    /// have no pace to be ahead of and report false.
+    /// In "Here-and-now time in all" (<see cref="HereAndNowMode"/>) the marker is
+    /// <see cref="NowMarker"/> itself - the clock's own position in the window - so every
+    /// bar with a window can be ahead of pace, not only the two that carry discrete ticks.
+    /// Otherwise it is the "today" tick from <see cref="Markers"/>/
+    /// <see cref="TodayMarkerIndex"/>, the boundary the day in progress runs out at. Bars
+    /// with neither - every bar outside the two week views when ticks are what is showing,
+    /// or any bar with no window at all in here-and-now mode - have no pace to be ahead of
+    /// and report false.
     /// </summary>
     public bool IsAheadOfPace
     {
         get
         {
-            var markers = _markers;
-            if (markers is null) return false;
-            if (_todayMarkerIndex < 0 || _todayMarkerIndex >= markers.Count) return false;
+            double marker;
+            if (_hereAndNowMode)
+            {
+                marker = NowMarker;
+                if (double.IsNaN(marker)) return false;
+            }
+            else
+            {
+                var markers = _markers;
+                if (markers is null) return false;
+                if (_todayMarkerIndex < 0 || _todayMarkerIndex >= markers.Count) return false;
 
-            var marker = markers[_todayMarkerIndex];
-            if (double.IsNaN(marker) || double.IsInfinity(marker)) return false;
+                marker = markers[_todayMarkerIndex];
+                if (double.IsNaN(marker) || double.IsInfinity(marker)) return false;
+            }
 
-            // Must match UsageBar.DrawMarkers' clamp of the same fraction: that one decides
-            // where the tick is drawn, this one decides what the fill is compared against,
-            // and they have to be the same number. Out of range they would disagree - the
-            // tick pinned to the bar's edge while this tested the raw value - reddening a row
-            // whose fill visibly falls short of the tick. Change one, change the other.
+            // Must match UsageBar.DrawMarkers'/DrawSingleMarker's own clamp of the same
+            // fraction: that one decides where the tick or marker is drawn, this one decides
+            // what the fill is compared against, and they have to be the same number. Out of
+            // range they would disagree - the mark pinned to the bar's edge while this tested
+            // the raw value - reddening a row whose fill visibly falls short of the mark.
+            // Change one, change the other.
             marker = Math.Clamp(marker, 0, 1);
 
             return _fraction > marker;
@@ -244,7 +276,114 @@ public sealed class BarViewModel : INotifyPropertyChanged
     /// recomputed when the clock crosses midnight without a poll - see
     /// MainViewModel.RefreshDayMarkers. Null on every bar whose ticks are not date-derived.
     /// </summary>
-    public DateTimeOffset? MarkerWindowEnd { get; set; }
+    public DateTimeOffset? MarkerWindowEnd => _markerWindowEnd;
+
+    /// <summary>
+    /// The start of this bar's own window, paired with <see cref="MarkerWindowEnd"/> so the
+    /// "Here-and-now time in all" display can place <see cref="NowMarker"/> at the clock's
+    /// own position between them. Set alongside MarkerWindowEnd wherever a bar's window is
+    /// known; null on any bar with no window to speak of.
+    /// </summary>
+    public DateTimeOffset? MarkerWindowStart => _markerWindowStart;
+
+    private DateTimeOffset? _markerWindowStart;
+    private DateTimeOffset? _markerWindowEnd;
+
+    /// <summary>
+    /// Sets this bar's window as one change, the way <see cref="SetMarkers"/> sets its own
+    /// pair - and for the same reason: <see cref="NowMarker"/> is derived from both ends
+    /// together, so announcing them separately would publish one poll's start against the
+    /// last one's end.
+    ///
+    /// Announcing at all is the point. These were plain auto-properties, and a poll that
+    /// moved the window without moving the fill - the common case, since every window slides
+    /// forward on every reset - left the marker drawn at its old position until the
+    /// once-a-second tick happened to catch it, and never at all outside here-and-now mode,
+    /// where that tick is a no-op (see <see cref="TickNowMarker"/>).
+    /// </summary>
+    public void SetMarkerWindow(DateTimeOffset? start, DateTimeOffset? end)
+    {
+        if (_markerWindowStart == start && _markerWindowEnd == end) return;
+
+        _markerWindowStart = start;
+        _markerWindowEnd = end;
+
+        OnPropertyChanged(nameof(MarkerWindowStart));
+        OnPropertyChanged(nameof(MarkerWindowEnd));
+        OnPropertyChanged(nameof(NowMarker));
+        PaceChanged();
+    }
+
+    private bool _hereAndNowMode;
+
+    /// <summary>
+    /// Whether the "Here-and-now time in all" display is active, set on every bar together
+    /// by MainViewModel whenever the context menu's "Display of markers" choice changes.
+    /// Lives on the bar rather than being read from the view model that owns it because
+    /// <see cref="NowMarker"/> needs to react to it without a back-reference.
+    /// </summary>
+    public bool HereAndNowMode
+    {
+        get => _hereAndNowMode;
+        set
+        {
+            if (!Set(ref _hereAndNowMode, value)) return;
+            OnPropertyChanged(nameof(NowMarker));
+            PaceChanged();
+        }
+    }
+
+    private bool _showMarkers = true;
+
+    /// <summary>
+    /// Whether this bar draws any marker at all - the "Show no markers" display, set on
+    /// every bar together by MainViewModel the same way <see cref="HereAndNowMode"/> is. The
+    /// pace colours (see <see cref="IsAheadOfPace"/>) still read Markers/TodayMarkerIndex
+    /// regardless, so this only feeds <see cref="UsageBar.ShowMarkers"/> and never touches
+    /// what is actually stored.
+    /// </summary>
+    public bool ShowMarkers
+    {
+        get => _showMarkers;
+        set => Set(ref _showMarkers, value);
+    }
+
+    /// <summary>
+    /// The "here-and-now" marker's position (0-1), or NaN when this display is off or this
+    /// bar has no window - see <see cref="UsageBar.NowMarker"/>, which this feeds directly.
+    ///
+    /// Recomputed from <see cref="MarkerWindowStart"/>/<see cref="MarkerWindowEnd"/> against
+    /// the clock on every call rather than cached, since nothing else marks it dirty as time
+    /// passes on its own - MainViewModel's once-a-second tick re-announces it instead of
+    /// computing it up front (see RefreshNowMarkers).
+    /// </summary>
+    public double NowMarker
+    {
+        get
+        {
+            if (!_hereAndNowMode) return double.NaN;
+            if (MarkerWindowStart is not { } start || MarkerWindowEnd is not { } end) return double.NaN;
+
+            var span = (end - start).Ticks;
+            if (span <= 0) return double.NaN;
+
+            var elapsed = (DateTimeOffset.UtcNow - start).Ticks;
+            var fraction = (double)elapsed / span;
+            return fraction < 0 ? 0 : fraction > 1 ? 1 : fraction;
+        }
+    }
+
+    /// <summary>
+    /// Re-announces <see cref="NowMarker"/> so the bar repaints, and re-evaluates
+    /// <see cref="IsAheadOfPace"/> since the fill can cross it with no poll in between - see
+    /// MainViewModel.RefreshNowMarkers.
+    /// </summary>
+    public void TickNowMarker()
+    {
+        if (!_hereAndNowMode) return;
+        OnPropertyChanged(nameof(NowMarker));
+        PaceChanged();
+    }
 
     /// <summary>
     /// The instant this bar's caption counts down to, kept so the countdown can be re-derived
@@ -450,7 +589,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// limit is full - see <see cref="BarViewModel.WarnCaption"/>.
     /// </summary>
     private BarViewModel NewClaudeBar(string label)
-        => new() { Label = label, ValueText = "—", Accent = ClaudeAccentColor, WarnCaption = false };
+        => new()
+        {
+            Label = label, ValueText = "—", Accent = ClaudeAccentColor, WarnCaption = false,
+            HereAndNowMode = _markerDisplayMode == MarkerDisplayMode.HereAndNow,
+            ShowMarkers = _markerDisplayMode != MarkerDisplayMode.None,
+        };
 
     public ObservableCollection<BarViewModel> ClaudeBars { get; } = new();
     public ObservableCollection<BarViewModel> CopilotBars { get; } = new();
@@ -1303,6 +1447,87 @@ public sealed class MainViewModel : INotifyPropertyChanged
         else OnPropertyChanged(WorkDaysCheckedProperty(days));
     }
 
+    // ---- marker display --------------------------------------------------------------------
+
+    private MarkerDisplayMode _markerDisplayMode = MarkerDisplayMode.Daily;
+
+    /// <summary>
+    /// Which of the three marker displays every bar uses, set from the context menu's
+    /// "Display of markers". Daily (the default) is "Daily view in Week" - the original
+    /// fixed calendar-boundary ticks; HereAndNow is "Here-and-now time in all" - a single
+    /// red marker per bar tracking the clock's own position in its window instead; None is
+    /// "Show no markers" - the bar with nothing drawn on it at all.
+    /// </summary>
+    public MarkerDisplayMode MarkerDisplayMode
+    {
+        get => _markerDisplayMode;
+        set
+        {
+            if (!Set(ref _markerDisplayMode, value)) return;
+            AppState.Update(a => a.MarkerDisplayMode = _markerDisplayMode.ToString());
+            OnPropertyChanged(nameof(IsMarkerDisplayDaily));
+            OnPropertyChanged(nameof(IsMarkerDisplayHereAndNow));
+            OnPropertyChanged(nameof(IsMarkerDisplayNone));
+
+            ApplyMarkerDisplayMode();
+        }
+    }
+
+    /// <summary>
+    /// Pushes the current <see cref="MarkerDisplayMode"/> onto every bar - both the
+    /// here-and-now flag and whether to draw anything at all (see
+    /// <see cref="BarViewModel.HereAndNowMode"/> and <see cref="BarViewModel.ShowMarkers"/>).
+    /// Split out from the setter so <see cref="LoadCollapsedState"/> can apply the restored
+    /// mode to bars the constructor already created without re-persisting it.
+    /// </summary>
+    private void ApplyMarkerDisplayMode()
+    {
+        var hereAndNow = _markerDisplayMode == MarkerDisplayMode.HereAndNow;
+        var show = _markerDisplayMode != MarkerDisplayMode.None;
+
+        foreach (var bar in ClaudeBars) { bar.HereAndNowMode = hereAndNow; bar.ShowMarkers = show; }
+        foreach (var bar in CopilotBars) { bar.HereAndNowMode = hereAndNow; bar.ShowMarkers = show; }
+        foreach (var bar in PacingBars) { bar.HereAndNowMode = hereAndNow; bar.ShowMarkers = show; }
+    }
+
+    /// <summary>
+    /// Backs the "Daily view in &quot;Week&quot;" item. CheckBox rather than Radio (see the
+    /// menu's own comment), so unchecking the one already selected is not a real choice -
+    /// there is always exactly one active display - and just snaps the checkmark back on,
+    /// the same way <see cref="SelectWorkDays"/> does for "Workdays in a week".
+    /// </summary>
+    public bool IsMarkerDisplayDaily
+    {
+        get => _markerDisplayMode == MarkerDisplayMode.Daily;
+        set
+        {
+            if (value) MarkerDisplayMode = MarkerDisplayMode.Daily;
+            else OnPropertyChanged(nameof(IsMarkerDisplayDaily));
+        }
+    }
+
+    /// <summary>Backs the "Here-and-now time in all" item - see <see cref="IsMarkerDisplayDaily"/>.</summary>
+    public bool IsMarkerDisplayHereAndNow
+    {
+        get => _markerDisplayMode == MarkerDisplayMode.HereAndNow;
+        set
+        {
+            if (value) MarkerDisplayMode = MarkerDisplayMode.HereAndNow;
+            else OnPropertyChanged(nameof(IsMarkerDisplayHereAndNow));
+        }
+    }
+
+    /// <summary>Backs the "Show no markers" item - see <see cref="IsMarkerDisplayDaily"/>.</summary>
+    public bool IsMarkerDisplayNone
+    {
+        get => _markerDisplayMode == MarkerDisplayMode.None;
+        set
+        {
+            if (value) MarkerDisplayMode = MarkerDisplayMode.None;
+            else OnPropertyChanged(nameof(IsMarkerDisplayNone));
+        }
+    }
+
     /// <summary>
     /// Width of the label column, shared by every bar so they line up. It is measured from
     /// only the labels actually on screen, so collapsing the panel with the longest label
@@ -1468,12 +1693,22 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     {
                         var (markers, todayIndex) = RollingWeekTodayMarkers(l.ResetsAt);
                         bar.SetMarkers(markers, todayIndex);
-                        bar.MarkerWindowEnd = l.ResetsAt;
                     }
                     else
                     {
                         bar.SetMarkers(null, -1);
-                        bar.MarkerWindowEnd = null;
+                    }
+
+                    // The window bounds feed the "here-and-now" marker regardless of which
+                    // display is active, so SESSION gets one too even though it never had
+                    // discrete ticks to begin with.
+                    if (l.ResetsAt is { } resets && ClaudeWindowLength(l.Kind) is { } length)
+                    {
+                        bar.SetMarkerWindow(resets - length, resets);
+                    }
+                    else
+                    {
+                        bar.SetMarkerWindow(null, null);
                     }
 
                     bar.Label = l.Label;
@@ -1590,6 +1825,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _pacingDaysLeft = pacing.BusinessDaysLeft;
         UpdatePacingSubtitle();
 
+        var now = DateTime.Now;
+        var todayStart = now.Date;
+
+        PacingBars[0].SetMarkerWindow(
+            new DateTimeOffset(todayStart), new DateTimeOffset(todayStart.AddDays(1)));
         Set(PacingBars[0], pacing.DayFraction, pacing.DayPercent,
             pacing.UsedToday, pacing.PerDayAllowance);
 
@@ -1598,9 +1838,26 @@ public sealed class MainViewModel : INotifyPropertyChanged
         // and the today marker together (see BarViewModel.IsAheadOfPace).
         PacingBars[1].SetMarkers(
             WeekMarkers(pacing.WorkdaysInWeek), pacing.WorkdayIndexInWeek - 1);
+        // The week bar's budget spans Monday through its last workday (see WorkdaysInWeek),
+        // so the here-and-now window matches that span rather than the calendar week -
+        // Saturday/Sunday would otherwise sit past the bar's own right edge.
+        //
+        // Except once that span is already behind us. On a 5-day work week the workday span
+        // ends at Saturday 00:00, so all weekend the clock sits past the window's end: the
+        // marker pinned to the right edge and IsAheadOfPace could never fire, whatever was
+        // actually spent. Running the window out to the end of the calendar week instead
+        // keeps the marker moving through those days - the budget is still the workdays', so
+        // a weekend marker past the last workday tick is exactly the right reading: every
+        // workday is gone and nothing is left to pace against.
+        var weekStart = BusinessDays.StartOfWeek(now);
+        var weekEnd = weekStart.AddDays(pacing.WorkdaysInWeek);
+        if (weekEnd <= now) weekEnd = weekStart.AddDays(7);
+        PacingBars[1].SetMarkerWindow(new DateTimeOffset(weekStart), new DateTimeOffset(weekEnd));
         Set(PacingBars[1], pacing.WeekFraction, pacing.WeekPercent,
             pacing.UsedThisWeek, pacing.WeekBudget);
 
+        var (monthStart, monthEnd) = CalendarMonthWindow(now, status.ResetDate);
+        PacingBars[2].SetMarkerWindow(monthStart, monthEnd);
         Set(PacingBars[2], pacing.MonthFraction, pacing.MonthPercent,
             pacing.UsedThisPeriod, pacing.Entitlement);
 
@@ -1640,8 +1897,60 @@ public sealed class MainViewModel : INotifyPropertyChanged
         return markers;
     }
 
-    /// <summary>Whether a Claude limit's Kind is the rolling 7-day window - see ClaudeLimitsService.LabelFor.</summary>
-    private static bool IsWeeklyLimit(string kind) => kind is "weekly_all" or "seven_day";
+    /// <summary>
+    /// The calendar-month window GitHub Copilot's own quota buckets (and My Pace's Month
+    /// bar, which shares the same period) reset on - see CLAUDE.md's note that this bucket
+    /// is a real calendar month. Ends at <paramref name="resetAt"/> when GitHub reports one,
+    /// since the reset is what actually starts the next period; otherwise falls back to the
+    /// calendar month containing <paramref name="now"/>, for the moment right after sign-in
+    /// when a poll has not yet reported one.
+    /// </summary>
+    private static (DateTimeOffset Start, DateTimeOffset End) CalendarMonthWindow(
+        DateTime now, DateTimeOffset? resetAt)
+    {
+        var fallback = new DateTime(now.Year, now.Month, DateTime.DaysInMonth(now.Year, now.Month)).AddDays(1);
+        var end = resetAt?.ToLocalTime().Date ?? fallback;
+
+        // A reset already in the past is a stale figure - GitHub's last poll reported a
+        // period that has since rolled over, or the app has been asleep across one. Falling
+        // back to the calendar month containing now is the same "a reset already elapsed
+        // cannot bound the window we are in" correction BusinessDays.RemainingInPeriod
+        // makes; without it the clock sat past the window's end and pinned the Month
+        // marker to the right edge for as long as the stale date stood.
+        if (end <= now.Date) end = fallback;
+
+        var start = end.AddMonths(-1);
+        return (new DateTimeOffset(start), new DateTimeOffset(end));
+    }
+
+    /// <summary>
+    /// Whether a Claude limit's Kind is one of the rolling 7-day windows - see
+    /// ClaudeLimitsService.LabelFor. The per-model weekly pools (WEEK - OPUS, WEEK - SONNET)
+    /// count: they are the same seven-day window as WEEK, only over a narrower pool, so they
+    /// take the same day ticks. Keep in step with <see cref="ClaudeWindowLength"/>.
+    /// </summary>
+    private static bool IsWeeklyLimit(string kind) => kind is "weekly_all" or "seven_day"
+        or "weekly_opus" or "seven_day_opus"
+        or "weekly_sonnet" or "seven_day_sonnet";
+
+    /// <summary>
+    /// The window length behind a Claude limit's <c>ResetsAt</c>, for the "here-and-now"
+    /// marker - see <see cref="BarViewModel.MarkerWindowStart"/>. Null for a kind this app
+    /// does not otherwise recognise, which leaves that bar with no marker in either display
+    /// rather than guessing at a window it was never told.
+    /// </summary>
+    private static TimeSpan? ClaudeWindowLength(string kind) => kind switch
+    {
+        // Every weekly kind ClaudeLimitsService.LabelFor knows about, not only the "all
+        // models" one: WEEK - OPUS and WEEK - SONNET are the same rolling 7-day window on a
+        // narrower pool, so leaving them out gave those rows no here-and-now marker and no
+        // pace colour at all. Keep this in step with LabelFor.
+        "weekly_all" or "seven_day"
+            or "weekly_opus" or "seven_day_opus"
+            or "weekly_sonnet" or "seven_day_sonnet" => TimeSpan.FromDays(7),
+        "session" or "five_hour" => TimeSpan.FromHours(5),
+        _ => null,
+    };
 
     /// <summary>
     /// Builds markers for Claude's rolling 7-day window, spanning the whole window - days
@@ -1985,7 +2294,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         bar.IsOverBudget = false;
         bar.IsUnlimited = false;
         bar.SetMarkers(null, -1);
-        bar.MarkerWindowEnd = null;
+        bar.SetMarkerWindow(null, null);
         bar.ResetsAt = null;
     }
 
@@ -2097,6 +2406,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 bar.IsEnabled = true;
                 bar.IsOverBudget = false;
                 bar.IsUnlimited = true;
+                bar.SetMarkerWindow(null, null);
             }
             else if (!q.HasQuota || q.Entitlement <= 0)
             {
@@ -2108,6 +2418,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 bar.IsEnabled = false;
                 bar.IsOverBudget = false;
                 bar.IsUnlimited = false;
+                bar.SetMarkerWindow(null, null);
             }
             else
             {
@@ -2120,6 +2431,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 bar.IsEnabled = true;
                 bar.IsUnlimited = false;
                 bar.IsOverBudget = spent;
+
+                // GitHub's quota is a real calendar month (00:00 the 1st to the reset date,
+                // which is the 1st of the next one) - see CLAUDE.md's note on this bucket.
+                var (start, end) = CalendarMonthWindow(DateTime.Now, status.ResetDate);
+                bar.SetMarkerWindow(start, end);
             }
         }
 
@@ -2503,6 +2819,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
         foreach (var bar in ClaudeBars)
         {
+            // Markers is null on SESSION - a 5h window has no midnight to tick at - even
+            // though it now carries a MarkerWindowEnd too, for the here-and-now display. Only
+            // a bar with ticks to begin with needs them rebuilt across the date change.
+            if (bar.Markers is null) continue;
             if (bar.MarkerWindowEnd is not { } end) continue;
 
             var (markers, todayIndex) = RollingWeekTodayMarkers(end);
@@ -2515,6 +2835,21 @@ public sealed class MainViewModel : INotifyPropertyChanged
         // "Workdays in a week" menu does. Without this its marker, and the pace colour now
         // derived from it, would name yesterday until the next Copilot poll.
         if (_lastCopilotStatus is { } status) RefreshPacing(status);
+    }
+
+    /// <summary>
+    /// Re-announces every bar's "here-and-now" marker so it visibly creeps forward between
+    /// polls, the same way <see cref="RefreshResetCaptions"/> keeps the countdown captions
+    /// live. A no-op whenever the display is off - see <see cref="BarViewModel.TickNowMarker"/>
+    /// - so this costs nothing while "Daily view in Week" is selected.
+    /// </summary>
+    private void RefreshNowMarkers()
+    {
+        if (_markerDisplayMode != MarkerDisplayMode.HereAndNow) return;
+
+        foreach (var bar in ClaudeBars) bar.TickNowMarker();
+        foreach (var bar in CopilotBars) bar.TickNowMarker();
+        foreach (var bar in PacingBars) bar.TickNowMarker();
     }
 
     /// <summary>
@@ -2558,6 +2893,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         RefreshDayMarkers();
         RefreshResetCaptions();
+        RefreshNowMarkers();
 
         var d = _nextRefresh - DateTimeOffset.UtcNow;
         if (d <= TimeSpan.Zero)
@@ -2630,6 +2966,15 @@ public sealed class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(WorkDaysPerWeek));
         for (int n = BusinessDays.MinWorkDaysPerWeek; n <= BusinessDays.MaxWorkDaysPerWeek; n++)
             OnPropertyChanged(WorkDaysCheckedProperty(n));
+
+        // Absent, unrecognised, or invalid means never set: stay on "Daily view in Week".
+        _markerDisplayMode = Enum.TryParse<MarkerDisplayMode>(state.MarkerDisplayMode, out var mode)
+            ? mode
+            : MarkerDisplayMode.Daily;
+        OnPropertyChanged(nameof(IsMarkerDisplayDaily));
+        OnPropertyChanged(nameof(IsMarkerDisplayHereAndNow));
+        OnPropertyChanged(nameof(IsMarkerDisplayNone));
+        ApplyMarkerDisplayMode();
 
         InitialiseAutostart(state);
 

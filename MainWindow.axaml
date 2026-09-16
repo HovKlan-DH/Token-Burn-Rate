@@ -59,6 +59,8 @@
                        Fill="{Binding FillColour, Converter={StaticResource Brush}}"
                        Markers="{Binding Markers}"
                        TodayMarkerIndex="{Binding TodayMarkerIndex}"
+                       NowMarker="{Binding NowMarker}"
+                       ShowMarkers="{Binding ShowMarkers}"
                        MarkerAccentBrush="#F85149"/>
         <TextBlock Grid.Column="2" Text="{Binding ValueText}" Classes="barvalue"
                    VerticalAlignment="Bottom" Margin="8,0,0,-1"
@@ -158,8 +160,7 @@
                     IsEnabled="{Binding CanDecreaseFontScale}"/>
           <MenuItem Name="ResetTextItem" Header="Reset to default"/>
         </MenuItem>
-        <MenuItem Header="Workdays in a week"
-                  ToolTip.Tip="How many days count as a workday for GitHub Copilot : My Pace - the first N days starting Monday">
+        <MenuItem Header="Workdays in a week">
           <!-- CheckBox rather than Radio: mutual exclusivity is already handled by
                WorkDaysPerWeek's setter (it flips every other IsWorkDaysN to false), and
                CheckBox is what draws the same checkmark glyph the rest of the menu uses -
@@ -178,6 +179,18 @@
                     IsChecked="{Binding IsWorkDays6, Mode=TwoWay}"/>
           <MenuItem Header="7" ToggleType="CheckBox"
                     IsChecked="{Binding IsWorkDays7, Mode=TwoWay}"/>
+        </MenuItem>
+        <MenuItem Header="Display of markers">
+          <!-- CheckBox rather than Radio, matching "Workdays in a week" above: mutual
+               exclusivity is already handled by MarkerDisplayMode's setter, and CheckBox is
+               what draws the same checkmark glyph the rest of the menu uses - Radio would
+               draw a dot instead. -->
+          <MenuItem Header="Current time marker" ToggleType="CheckBox"
+                    IsChecked="{Binding IsMarkerDisplayHereAndNow, Mode=TwoWay}"/>
+          <MenuItem Header="Daily marker in week" ToggleType="CheckBox"
+                    IsChecked="{Binding IsMarkerDisplayDaily, Mode=TwoWay}"/>
+          <MenuItem Header="Show no markers" ToggleType="CheckBox"
+                    IsChecked="{Binding IsMarkerDisplayNone, Mode=TwoWay}"/>
         </MenuItem>
         <Separator/>
         <MenuItem Header="Advanced">
@@ -223,8 +236,7 @@
           <MenuItem Header="{Binding VersionText}" IsEnabled="False"/>
         </MenuItem>
         <Separator/>
-        <MenuItem Name="ExitItem" Header="Exit application"
-                  ToolTip.Tip="Quit Token Burn Rate completely"/>
+        <MenuItem Name="ExitItem" Header="Exit application"/>
       </ContextMenu>
     </Border.ContextMenu>
     <LayoutTransformControl Name="ScaleRoot">
