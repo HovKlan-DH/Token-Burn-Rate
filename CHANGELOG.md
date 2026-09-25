@@ -1,6 +1,7 @@
 # 1.2.0, 2026-September-?
 -------------------------
 - Fixed it will recheck updates if there are network connectivity issues
+- Fixes it did never start with UI, even if UI was visible before computer shutdown
 
 
 # 1.1.0, 2026-September-16
