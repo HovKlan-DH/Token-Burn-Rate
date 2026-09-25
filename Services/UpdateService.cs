@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Velopack;
 using Velopack.Sources;
@@ -10,10 +11,11 @@ namespace TokenBurnRate.Services;
 /// Checks GitHub Releases for a newer Velopack-packaged build and, if one exists,
 /// downloads and applies it, restarting into the new version.
 ///
-/// Runs once per launch, fire-and-forget, the same shape as <see cref="CheckInService"/>:
+/// Runs once per launch in the background, the same shape as <see cref="CheckInService"/>:
 /// a failure here (offline, rate-limited, running unpackaged under `dotnet run`) must never
-/// delay startup or surface an error the user cannot act on. There is no user-facing
-/// prompt - the update simply appears the next time the widget starts.
+/// delay startup or surface an error the user cannot act on, and one that never reached
+/// GitHub is retried by the window's <see cref="StartupRetry"/> schedule. There is no
+/// user-facing prompt - the widget restarts into the new version on its own.
 /// </summary>
 public static class UpdateService
 {
@@ -72,12 +74,31 @@ public static class UpdateService
     private static UpdateManager NewManager(string repoUrl) =>
         new(new GithubSource(repoUrl, accessToken: null, prerelease: true));
 
-    public static void CheckOnLaunch(bool includeAlpha, bool includeBeta)
-    {
-        _ = CheckOnLaunchAsync(includeAlpha, includeBeta);
-    }
+    /// <summary>How often a held restart looks again at whatever is holding it.</summary>
+    private static readonly TimeSpan RestartHoldPoll = TimeSpan.FromSeconds(5);
 
-    private static async Task CheckOnLaunchAsync(bool includeAlpha, bool includeBeta)
+    /// <summary>
+    /// Checks for, downloads and applies an update, and reports whether the attempt is
+    /// settled - true covers "found nothing to update to", "update applied" (which restarts
+    /// the process before returning anyway) and any failure not worth retrying; false means
+    /// it never reached GitHub (see <see cref="StartupRetry.IsTransportFailure"/>), so the
+    /// caller should try again. Never throws.
+    ///
+    /// A retry can run minutes into the session rather than at launch, so both callbacks
+    /// are asked on the UI thread at the moments that matter, not only when the check began:
+    /// <paramref name="stillWanted"/> (auto-update is still switched on) before downloading
+    /// and again before restarting - false abandons the update, since with it off the widget
+    /// must never restart itself - and <paramref name="busy"/> (a sign-in or dialog is open)
+    /// before restarting - true holds the restart until it clears, because restarting would
+    /// throw away whatever the user was halfway through, such as a Claude sign-in waiting
+    /// for its pasted code.
+    ///
+    /// <paramref name="shutdown"/> is the app's shutdown token: cancelling it abandons an
+    /// in-flight download or held restart and reports the attempt settled, so an exit is not
+    /// mistaken for a network failure worth retrying into a closing process.
+    /// </summary>
+    public static async Task<bool> CheckOnLaunchAsync(bool includeAlpha, bool includeBeta,
+        Func<bool> stillWanted, Func<bool> busy, CancellationToken shutdown)
     {
         try
         {
@@ -100,7 +121,7 @@ public static class UpdateService
             if (!manager.IsInstalled)
             {
                 DiagLog("stopping: not installed");
-                return;
+                return true;
             }
 
             // A pre-rename install cannot match the new packId - see LegacyAppId - so it is
@@ -115,7 +136,7 @@ public static class UpdateService
             if (update is null)
             {
                 DiagLog("stopping: CheckForUpdatesAsync returned null (no update found)");
-                return;
+                return true;
             }
 
             var candidateTier = TierOf(update.TargetFullRelease.Version);
@@ -126,13 +147,41 @@ public static class UpdateService
                 // releases are deleted by the workflow, so there is no older, allowed release
                 // to fall back to instead; this is simply "nothing to update to right now".
                 DiagLog($"stopping: candidate {update.TargetFullRelease.Version} is tier {candidateTier}, above requested max {maxTier}");
-                return;
+                return true;
             }
 
             DiagLog($"update found: {update.TargetFullRelease.Version} (tier {candidateTier})");
 
-            await manager.DownloadUpdatesAsync(update).ConfigureAwait(false);
-            DiagLog("download complete, applying and restarting");
+            if (!await OnUiThread(stillWanted))
+            {
+                DiagLog("stopping: auto-update was turned off before downloading");
+                return true;
+            }
+
+            await manager.DownloadUpdatesAsync(update, cancelToken: shutdown).ConfigureAwait(false);
+            DiagLog("download complete");
+
+            var held = false;
+            while (true)
+            {
+                if (!await OnUiThread(stillWanted))
+                {
+                    DiagLog("stopping: auto-update was turned off before restarting");
+                    return true;
+                }
+
+                if (!await OnUiThread(busy)) break;
+
+                if (!held)
+                {
+                    DiagLog("restart held: a sign-in or dialog is open");
+                    held = true;
+                }
+
+                await Task.Delay(RestartHoldPoll, shutdown).ConfigureAwait(false);
+            }
+
+            DiagLog("applying and restarting");
 
             // TrayNotifier keeps unsynchronised static Win32 handles and is otherwise only
             // ever called from the UI thread (minimise-to-tray); the awaits above left this
@@ -147,17 +196,49 @@ public static class UpdateService
             }
 
             manager.ApplyUpdatesAndRestart(update);
+            return true;    // unreached in practice - the call above ends the process
+        }
+        catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
+        {
+            // The user exited mid-download. An orderly shutdown, not a failure: kept out of
+            // CrashLog, which exists for things worth investigating, and reported settled so
+            // no retry is armed against a process that is going away.
+            DiagLog("stopping: shutdown cancelled the check");
+            return true;
         }
         catch (Exception ex)
         {
             // Offline, GitHub rate limit, unpackaged dev build: none of it should affect the
             // widget, and there is nothing actionable to tell the user. Recorded rather than
-            // silently dropped so a "never updates" report has something to go on - in the
-            // shared log for the summary, and in CrashLog for the full stack trace.
-            AppLog.Error("Update: check failed", ex);
-            CrashLog.Record(ex, "update check");
+            // silently dropped so a "never updates" report has something to go on.
+            //
+            // Only a transport-shaped failure (no route yet, DNS not resolving, connect
+            // timeout) is worth retrying - see StartupRetry. A GitHub rate limit or a
+            // genuinely unpackaged dev build would fail the same way again immediately.
+            var transport = StartupRetry.IsTransportFailure(ex, shutdown);
+
+            // That same split decides CrashLog. A transport failure is expected while a VPN
+            // comes up and is retried, and CrashLog keeps only a handful of files per run -
+            // a slow boot's failures would use them all up, leaving no file for a crash
+            // later in the session that is actually worth investigating. The shared log's
+            // one line is enough for those.
+            if (transport)
+            {
+                AppLog.Warn($"Update: check could not reach GitHub, will retry - {ex.GetType().Name}: {ex.Message}");
+            }
+            else
+            {
+                AppLog.Error("Update: check failed", ex);
+                CrashLog.Record(ex, "update check");
+            }
+
+            return !transport;
         }
     }
+
+    /// <summary>Asks a window-state question on the UI thread, where that state lives.</summary>
+    private static async Task<bool> OnUiThread(Func<bool> question) =>
+        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(question);
 
     /// <summary>
     /// Routes the update check's running commentary into the same log everything else uses

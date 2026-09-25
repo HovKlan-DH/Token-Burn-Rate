@@ -402,6 +402,22 @@ public sealed class BarViewModel : INotifyPropertyChanged
     /// </summary>
     public DateTimeOffset? ResetsAt { get; set; }
 
+    /// <summary>
+    /// The API's kind for a Claude bar ("weekly_all", "session", ...), null on every other
+    /// bar and on a Claude placeholder no poll has filled yet. Code that needs to find a
+    /// particular limit matches on this, never on <see cref="Label"/>: the label is display
+    /// text and changes with context - the all-models week reads "WEEK" or "WEEK (TOTAL)"
+    /// depending on whether a per-model week sits beside it.
+    /// </summary>
+    public string? Kind { get; set; }
+
+    /// <summary>
+    /// A Claude bar's name in ordinary case ("Week (Fable)"), for the tray tooltip. Null on
+    /// every other bar, whose all-caps labels are plain words that title-case back
+    /// correctly - a model name does not: "FABLE" would come back as "fable".
+    /// </summary>
+    public string? Name { get; set; }
+
     public event PropertyChangedEventHandler? PropertyChanged;
     private void OnPropertyChanged([CallerMemberName] string? n = null)
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(n));
@@ -689,8 +705,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private BarViewModel? ResolveNamedIconSource(string source) => source switch
     {
-        "claude.session" => UsableBar(ClaudeVisible && ClaudeAvailable ? ClaudeBarByLabel("SESSION") : null),
-        "claude.week" => UsableBar(ClaudeVisible && ClaudeAvailable ? ClaudeBarByLabel("WEEK") : null),
+        "claude.session" => UsableBar(ClaudeVisible && ClaudeAvailable ? ClaudeBarWhere(ClaudeLimitKind.IsSession) : null),
+        "claude.week" => UsableBar(ClaudeVisible && ClaudeAvailable ? ClaudeBarWhere(ClaudeLimitKind.IsTotalWeek) : null),
         "copilot.completions" => UsableBar(CopilotVisible ? CopilotBarAt(0) : null),
         "copilot.chat" => UsableBar(CopilotVisible ? CopilotBarAt(1) : null),
         "copilot.premium" => UsableBar(CopilotVisible ? CopilotBarAt(2) : null),
@@ -700,10 +716,15 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _ => null,     // "max" and anything unrecognised resolve through MaxIconSource
     };
 
-    private BarViewModel? ClaudeBarByLabel(string label)
+    /// <summary>
+    /// The first Claude bar whose API kind matches - a ClaudeLimitKind predicate, which
+    /// covers both the "limits" array's and the flat fallback's name for the same limit. By
+    /// kind rather than by label: see <see cref="BarViewModel.Kind"/>.
+    /// </summary>
+    private BarViewModel? ClaudeBarWhere(Func<string, bool> kind)
     {
         foreach (var bar in ClaudeBars)
-            if (string.Equals(bar.Label, label, StringComparison.OrdinalIgnoreCase))
+            if (bar.Kind is { } k && kind(k))
                 return bar;
         return null;
     }
@@ -1534,6 +1555,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// hands that space back to the remaining bars.
     /// </summary>
     public double LabelWidth { get => _labelWidth; private set => Set(ref _labelWidth, value); }
+
+    /// <summary>Ceiling on <see cref="LabelWidth"/>, at FontScale 1.0 like every layout figure
+    /// here. Roomy enough for every fixed label and a short model name ("WEEK (FABLE)"), and
+    /// still leaves the bars most of the 340px row.</summary>
+    private const double MaxLabelWidth = 110;
     public string PacingSubtitle { get => _pacingSubtitle; private set => Set(ref _pacingSubtitle, value); }
 
     /// <summary>
@@ -1688,7 +1714,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     // sees one poll's values rather than this poll's fraction against the
                     // last one's boundary. Both are set inside a single dispatcher pass, so
                     // this orders the notifications, not the painting.
-                    var isWeekly = IsWeeklyLimit(l.Kind);
+                    var isWeekly = ClaudeLimitKind.IsWeek(l.Kind);
                     if (isWeekly)
                     {
                         var (markers, todayIndex) = RollingWeekTodayMarkers(l.ResetsAt);
@@ -1702,7 +1728,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     // The window bounds feed the "here-and-now" marker regardless of which
                     // display is active, so SESSION gets one too even though it never had
                     // discrete ticks to begin with.
-                    if (l.ResetsAt is { } resets && ClaudeWindowLength(l.Kind) is { } length)
+                    if (l.ResetsAt is { } resets && ClaudeLimitKind.WindowLength(l.Kind) is { } length)
                     {
                         bar.SetMarkerWindow(resets - length, resets);
                     }
@@ -1711,6 +1737,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
                         bar.SetMarkerWindow(null, null);
                     }
 
+                    bar.Kind = l.Kind;
+                    bar.Name = l.Name;
                     bar.Label = l.Label;
                     bar.Fraction = l.Fraction;
                     bar.ValueText = $"{l.Percent:0}%";
@@ -1923,34 +1951,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
         return (new DateTimeOffset(start), new DateTimeOffset(end));
     }
 
-    /// <summary>
-    /// Whether a Claude limit's Kind is one of the rolling 7-day windows - see
-    /// ClaudeLimitsService.LabelFor. The per-model weekly pools (WEEK - OPUS, WEEK - SONNET)
-    /// count: they are the same seven-day window as WEEK, only over a narrower pool, so they
-    /// take the same day ticks. Keep in step with <see cref="ClaudeWindowLength"/>.
-    /// </summary>
-    private static bool IsWeeklyLimit(string kind) => kind is "weekly_all" or "seven_day"
-        or "weekly_opus" or "seven_day_opus"
-        or "weekly_sonnet" or "seven_day_sonnet";
-
-    /// <summary>
-    /// The window length behind a Claude limit's <c>ResetsAt</c>, for the "here-and-now"
-    /// marker - see <see cref="BarViewModel.MarkerWindowStart"/>. Null for a kind this app
-    /// does not otherwise recognise, which leaves that bar with no marker in either display
-    /// rather than guessing at a window it was never told.
-    /// </summary>
-    private static TimeSpan? ClaudeWindowLength(string kind) => kind switch
-    {
-        // Every weekly kind ClaudeLimitsService.LabelFor knows about, not only the "all
-        // models" one: WEEK - OPUS and WEEK - SONNET are the same rolling 7-day window on a
-        // narrower pool, so leaving them out gave those rows no here-and-now marker and no
-        // pace colour at all. Keep this in step with LabelFor.
-        "weekly_all" or "seven_day"
-            or "weekly_opus" or "seven_day_opus"
-            or "weekly_sonnet" or "seven_day_sonnet" => TimeSpan.FromDays(7),
-        "session" or "five_hour" => TimeSpan.FromHours(5),
-        _ => null,
-    };
 
     /// <summary>
     /// Builds markers for Claude's rolling 7-day window, spanning the whole window - days
@@ -2762,7 +2762,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
         // Auto, or a named source that fell back to auto: name the panel the winning bar
         // actually belongs to, since "Auto (highest)" alone does not say what is showing.
-        if (ClaudeBars.Contains(source)) return $"Claude : {Title(source.Label)}";
+        if (ClaudeBars.Contains(source)) return $"Claude : {source.Name ?? Title(source.Label)}";
         if (CopilotBars.Contains(source)) return $"GitHub : {Title(source.Label)}";
         if (PacingBars.Contains(source)) return $"My Pace : {Title(source.Label)}";
         return source.Label;
@@ -3127,8 +3127,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
         if (PacingVisible && PacingExpanded) widest = Widest(PacingBars, widest);
 
         // Padding to the right of the text, plus a floor so a single short label does not
-        // leave the bars starting awkwardly close to the edge.
-        LabelWidth = Math.Max(44, widest + 8);
+        // leave the bars starting awkwardly close to the edge - and a ceiling, because the
+        // column is shared by every row in a fixed-width window, and a Claude label can carry
+        // a server-supplied model or surface name of any length ("WEEK (...)"). Without it one
+        // long name would squeeze every bar in all three panels down to a sliver; past the
+        // ceiling the label is trimmed with an ellipsis instead (see barlabel in the XAML).
+        LabelWidth = Math.Clamp(widest + 8, 44, MaxLabelWidth);
 
         static double Widest(ObservableCollection<BarViewModel> bars, double running)
         {

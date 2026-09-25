@@ -89,9 +89,15 @@ GitHub Releases. Full rationale and the tradeoffs behind it:
 - `Services/UpdateService.cs` checks GitHub Releases on every launch and, if a newer
   version exists, downloads and applies it **silently**, then restarts — no dialog, no
   menu interaction. This was a deliberate choice over a "click to install" flow.
+- A launch check that never reached its server (typically a VPN such as ZScaler still
+  coming up) is retried by `Services/StartupRetry.cs`, for both the update check and the
+  check-in: quickly at first, then every 30 minutes, and soon after any network address
+  change. Because a retry can land mid-session, the restart into an update is held while a
+  sign-in or dialog is open.
 - The context menu's Advanced submenu has an "Auto-update to newest version" toggle,
   checked by default, backed by `AppState.AutoUpdate`/`MainViewModel.AutoUpdate`. Unchecked,
-  `MainWindow`'s Opened handler skips calling `UpdateService.CheckOnLaunch` entirely — the
+  `MainWindow` never starts or retries `UpdateService.CheckOnLaunchAsync`, and a check
+  already running re-reads the setting before downloading and before restarting - the
   widget never checks GitHub Releases and never restarts itself. This is separate from
   `Services/CheckInService.cs`'s mailscan.dk "ping home", which stays mandatory regardless
   of this setting since it's telemetry, not an update check.
@@ -103,7 +109,7 @@ GitHub Releases. Full rationale and the tradeoffs behind it:
   since alpha is the less stable tier, checking ALPHA alone still widens the update ceiling
   to admit alpha, beta, and release builds — see `UpdateService.MaxTierRequested`. Both
   persist to the state file (`AppState.UpdateIncludeAlpha/Beta`) and are read by
-  `MainViewModel`, which passes them into `UpdateService.CheckOnLaunch`. Since every
+  `MainViewModel`, which passes them into `UpdateService.CheckOnLaunchAsync`. Since every
   release so far is an alpha, a default launch currently has nothing to update to until the
   first bare X.Y.Z ships — that's expected, not a bug.
 - CI ([.github/workflows/build-and-release.yml](.github/workflows/build-and-release.yml))

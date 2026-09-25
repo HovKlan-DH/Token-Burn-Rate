@@ -106,6 +106,9 @@
     <Style Selector="TextBlock.barlabel">
       <Setter Property="FontSize" Value="9"/>
       <Setter Property="Foreground" Value="#8A8F98"/>
+      <!-- The label column has a ceiling (MainViewModel.MaxLabelWidth); a label longer than
+           that, such as a long server-supplied model name, ends in an ellipsis. -->
+      <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
     </Style>
     <Style Selector="TextBlock.barvalue">
       <Setter Property="FontSize" Value="11"/>

@@ -20,7 +20,8 @@ single-file-forever with no auto-update.
 
 **Update flow is silent/automatic, not notify-and-prompt.** `Services/UpdateService.cs`
 checks on every launch (hooked into `MainWindow.axaml.cs`'s `Opened` handler, alongside
-`CheckInService.PingHome()`), and if found, downloads and calls
+`CheckInService.PingHomeAsync()`, both retried by `StartupRetry` when the network is not
+up yet), and if found, downloads and calls
 `ApplyUpdatesAndRestart` immediately - no dialog, no menu interaction. A Windows-only
 `TrayNotifier` balloon announces the restart where supported. This was a deliberate choice
 over a "click to install" tray-menu flow - the user picked "set and forget" explicitly when

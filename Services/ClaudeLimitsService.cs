@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
@@ -191,32 +192,58 @@ public sealed class ClaudeLimitsService
         // limit kinds appear without a code change. Fall back to the flat fields if absent.
         if (root.TryGetProperty("limits", out var limits) && limits.ValueKind == JsonValueKind.Array)
         {
+            // Settled before any row is named, since the all-models week reads "Week" or
+            // "Week (Total)" depending on rows that may come after it in the array.
+            var split = false;
+            foreach (var l in limits.EnumerateArray())
+                if (Str(l, "kind") is { } k && ClaudeLimitKind.IsPerModelWeek(k)) split = true;
+
             foreach (var l in limits.EnumerateArray())
             {
                 var kind = Str(l, "kind");
-                if (kind is null) continue;
+                if (string.IsNullOrEmpty(kind)) continue;
 
                 status.Limits.Add(new ClaudeLimit
                 {
                     Kind = kind,
-                    Label = LabelFor(kind),
+                    Name = NameFor(kind, ScopeName(l), split),
                     Percent = Dbl(l, "percent"),
                     ResetsAt = Time(l, "resets_at"),
                     IsActive = l.TryGetProperty("is_active", out var a) && a.ValueKind == JsonValueKind.True,
                 });
             }
+
+            if (split) PutPerModelWeeksAboveTotal(status.Limits);
         }
 
         if (status.Limits.Count == 0)
         {
-            AddFlat(status, root, "five_hour", "SESSION");
-            AddFlat(status, root, "seven_day", "WEEK");
+            AddFlat(status, root, "five_hour", "Session");
+            AddFlat(status, root, "seven_day", "Week");
         }
 
         return status;
     }
 
-    private static void AddFlat(ClaudeLimitsStatus status, JsonElement root, string key, string label)
+    /// <summary>
+    /// Moves the per-model weeks to just above the all-models week. The server lists the
+    /// total first (claude.ai shows "This week" above "Fable this week"), but here the total
+    /// reads as the last line of the week, under the pools it sums, the way a total does.
+    /// Several per-model rows keep the server's order among themselves.
+    /// </summary>
+    private static void PutPerModelWeeksAboveTotal(List<ClaudeLimit> limits)
+    {
+        if (limits.FindIndex(IsTotal) < 0) return;      // nothing to sit above
+
+        var perModel = limits.FindAll(IsPerModel);
+        limits.RemoveAll(IsPerModel);
+        limits.InsertRange(limits.FindIndex(IsTotal), perModel);
+
+        static bool IsTotal(ClaudeLimit l) => ClaudeLimitKind.IsTotalWeek(l.Kind);
+        static bool IsPerModel(ClaudeLimit l) => ClaudeLimitKind.IsPerModelWeek(l.Kind);
+    }
+
+    private static void AddFlat(ClaudeLimitsStatus status, JsonElement root, string key, string name)
     {
         if (!root.TryGetProperty(key, out var el) || el.ValueKind != JsonValueKind.Object) return;
         if (!el.TryGetProperty("utilization", out var u) || u.ValueKind != JsonValueKind.Number) return;
@@ -224,22 +251,57 @@ public sealed class ClaudeLimitsService
         status.Limits.Add(new ClaudeLimit
         {
             Kind = key,
-            Label = label,
+            Name = name,
             Percent = u.GetDouble(),
             ResetsAt = Time(el, "resets_at"),
             IsActive = true,
         });
     }
 
-    /// <summary>Maps API limit kinds to short display labels, passing unknown kinds through.</summary>
-    private static string LabelFor(string kind) => kind switch
+    /// <summary>
+    /// Maps API limit kinds to short display names, passing unknown kinds through. Written
+    /// in ordinary case: the panel's all-caps label is derived from this (ClaudeLimit.Label),
+    /// while the tray tooltip uses it as it stands.
+    ///
+    /// "weekly_scoped" is one kind for every per-model (or per-surface) weekly pool, so the
+    /// kind alone cannot say which pool a row is - the server names it in the row's scope,
+    /// the same name claude.ai prints ("Fable this week"). The name is built from that
+    /// rather than a model name written in here, so it follows the scope when Anthropic
+    /// points it at a different model.
+    ///
+    /// <paramref name="split"/> says a per-model week is on screen beside the all-models
+    /// one, which is then "Week (Total)" so the two cannot be mistaken for each other. On a
+    /// plan with only the one week it stays plain "Week": there is nothing to tell apart,
+    /// and "(Total)" would imply a breakdown that is not there.
+    /// </summary>
+    private static string NameFor(string kind, string? scope, bool split) => kind switch
     {
-        "session" or "five_hour" => "SESSION",
-        "weekly_all" or "seven_day" => "WEEK",
-        "weekly_opus" or "seven_day_opus" => "WEEK - OPUS",
-        "weekly_sonnet" or "seven_day_sonnet" => "WEEK - SONNET",
-        _ => kind.Replace('_', ' ').ToUpperInvariant(),
+        _ when ClaudeLimitKind.IsSession(kind) => "Session",
+        _ when ClaudeLimitKind.IsTotalWeek(kind) => split ? "Week (Total)" : "Week",
+        "weekly_opus" or "seven_day_opus" => "Week (Opus)",
+        "weekly_sonnet" or "seven_day_sonnet" => "Week (Sonnet)",
+        "weekly_scoped" => $"Week ({scope ?? "Scoped"})",
+        _ => char.ToUpperInvariant(kind[0]) + kind[1..].Replace('_', ' '),
     };
+
+    /// <summary>
+    /// The server's display name for what a scoped limit covers: <c>scope.model</c> or
+    /// <c>scope.surface</c>, each carrying a <c>display_name</c>. Null for an unscoped row.
+    /// </summary>
+    private static string? ScopeName(JsonElement limit)
+    {
+        if (!limit.TryGetProperty("scope", out var scope) || scope.ValueKind != JsonValueKind.Object)
+            return null;
+
+        foreach (var key in new[] { "model", "surface" })
+        {
+            if (scope.TryGetProperty(key, out var s) && s.ValueKind == JsonValueKind.Object
+                && Str(s, "display_name") is { } name && !string.IsNullOrWhiteSpace(name))
+                return name.Trim();
+        }
+
+        return null;
+    }
 
     private static string? Str(JsonElement el, string name)
         => el.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;

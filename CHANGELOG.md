@@ -1,8 +1,13 @@
-# 1.1.0, 2026-September-?
+# 1.2.0, 2026-September-?
 -------------------------
+- Fixed it will recheck updates if there are network connectivity issues
+
+
+# 1.1.0, 2026-September-16
+--------------------------
 - Added new marker display style
 - Added option to _not_ see any markers at all
-- Fixed it will not display UI at startup, if previously not shown
+- Fixed it should not display UI at startup, if previously not shown
 
 
 # 1.0.0, 2026-September-14

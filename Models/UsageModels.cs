@@ -57,11 +57,57 @@ public sealed class CopilotStatus
     public bool IsAvailable => Error is null && Quotas.Count > 0;
 }
 
+/// <summary>
+/// The one place Claude limit kinds are classified - the "limits" array's names and the
+/// flat fallback's alike. Everything that treats a kind as a session, a week, the
+/// all-models week or a per-model week asks here, so a new weekly kind is added once
+/// rather than to several lists kept in step by comments - miss one and that row silently
+/// loses its day ticks, its here-and-now marker or its "(Total)" naming.
+/// </summary>
+public static class ClaudeLimitKind
+{
+    public static bool IsSession(string kind) => kind is "session" or "five_hour";
+
+    /// <summary>The all-models week: "Week", or "Week (Total)" beside a per-model week.</summary>
+    public static bool IsTotalWeek(string kind) => kind is "weekly_all" or "seven_day";
+
+    /// <summary>A week over a narrower pool than the total - one model or surface.
+    /// "weekly_scoped" is the server's generic kind for these, named by the row's scope.</summary>
+    public static bool IsPerModelWeek(string kind) => kind is "weekly_scoped"
+        or "weekly_opus" or "seven_day_opus"
+        or "weekly_sonnet" or "seven_day_sonnet";
+
+    /// <summary>Any rolling seven-day window. A per-model week counts: it is the same
+    /// window as the total over a narrower pool, so it takes the same day ticks.</summary>
+    public static bool IsWeek(string kind) => IsTotalWeek(kind) || IsPerModelWeek(kind);
+
+    /// <summary>
+    /// The window length behind a limit's <c>ResetsAt</c>, for the "here-and-now" marker.
+    /// Null for a kind this app does not recognise, which leaves that bar with no marker
+    /// rather than guessing at a window it was never told.
+    /// </summary>
+    public static TimeSpan? WindowLength(string kind) =>
+        IsWeek(kind) ? TimeSpan.FromDays(7)
+        : IsSession(kind) ? TimeSpan.FromHours(5)
+        : null;
+}
+
 /// <summary>One plan limit as reported by Anthropic, with its real reset time.</summary>
 public sealed class ClaudeLimit
 {
     public required string Kind { get; init; }
-    public required string Label { get; init; }
+
+    /// <summary>
+    /// The limit's name in ordinary case - "Week (Fable)" - for prose such as the tray
+    /// tooltip. A model name keeps the capitals the server gave it, which cannot be
+    /// recovered from the all-caps <see cref="Label"/> once it has been uppercased.
+    /// </summary>
+    public required string Name { get; init; }
+
+    /// <summary>The panel's all-caps row label. Derived from <see cref="Name"/> so the two
+    /// can never name different things.</summary>
+    public string Label => Name.ToUpperInvariant();
+
     /// <summary>Utilization 0-100, straight from the API. Not derived locally.</summary>
     public double Percent { get; init; }
     public DateTimeOffset? ResetsAt { get; init; }

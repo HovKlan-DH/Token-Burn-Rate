@@ -19,8 +19,22 @@ public partial class MainWindow : Window
     private readonly MainViewModel _vm = new();
     private readonly DispatcherTimer _timer;
     private readonly DispatcherTimer _countdownTimer;
+    private readonly DispatcherTimer _retryTimer;
     private readonly CancellationTokenSource _cts = new();
     private TrayIcon? _tray;
+
+    /// <summary>
+    /// Retry schedules for the two launch-only background calls that can lose their single
+    /// shot to a VPN client (ZScaler and similar) still coming up when the window opens -
+    /// see StartupRetry. Independent of each other: mailscan.dk and github.com can become
+    /// reachable at different times.
+    /// </summary>
+    private readonly Services.StartupRetry _checkInRetry = new();
+    private readonly Services.StartupRetry _updateCheckRetry = new();
+
+    /// <summary>Whether OnNetworkChanged is hooked to the OS's static network-change event,
+    /// so OnClosing unhooks only what was actually hooked.</summary>
+    private bool _networkHooked;
 
     /// <summary>
     /// Set when the user has chosen to exit for real, so OnClosing stops intercepting and
@@ -191,18 +205,41 @@ public partial class MainWindow : Window
 
         // Separate one-second tick so the countdowns visibly run down between refreshes.
         _countdownTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        _countdownTimer.Tick += (_, _) =>
-        {
-            _vm.TickCountdowns();
+        _countdownTimer.Tick += (_, _) => _vm.TickCountdowns();
+        _countdownTimer.Start();
 
+        // Retries get a one-second clock of their own rather than sharing the countdown's:
+        // HideToTray stops that one, and a launch that starts hidden in the tray is exactly
+        // the boot where a VPN is still coming up - polling there meant a failed launch
+        // check was never retried until the user happened to open the window. This one runs
+        // for the life of the window, hidden or not; each tick is a few field compares.
+        _retryTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _retryTimer.Tick += (_, _) =>
+        {
             // A poll that found nothing shortens its own deadline to retry sooner than the
             // cadence - see SettleLoadingState. The refresh timer runs on a fixed interval
-            // and cannot honour that, so the second-tick drives it: this is already the
-            // clock watching that deadline, and a retry is only ever due while the widget
-            // has nothing to show at all.
+            // and cannot honour that, so the second-tick drives it. A retry is only ever due
+            // while the widget has nothing to show at all - including on the tray ring,
+            // which is why this must keep running while the window is hidden too.
             if (_vm.RetryDue) RunRefresh("startup retry", force: false);
+
+            RunDueStartupChecks();
         };
-        _countdownTimer.Start();
+        _retryTimer.Start();
+
+        // A VPN adapter coming up changes the machine's addresses - the moment a launch
+        // check that failed for want of a network is most likely to succeed, so both
+        // schedules bring their next attempt forward. Not available on every platform, and
+        // the schedules' own fallback cadence covers its absence.
+        try
+        {
+            System.Net.NetworkInformation.NetworkChange.NetworkAddressChanged += OnNetworkChanged;
+            _networkHooked = true;
+        }
+        catch (Exception ex)
+        {
+            Services.AppLog.Warn($"Startup: network change notifications unavailable - {ex.Message}");
+        }
 
         // Opened fires on every Show(), not just the first one, so this guards itself.
         // Without that, coming back from the tray re-ran the "initial" refresh and pushed
@@ -254,16 +291,59 @@ public partial class MainWindow : Window
             RunRefresh("initial refresh");
 
             // Mandatory regardless of AutoUpdate: this is telemetry, not an update check.
-            Services.CheckInService.PingHome();
+            _checkInRetry.Start();
 
             if (_vm.AutoUpdate)
-                Services.UpdateService.CheckOnLaunch(_vm.UpdateIncludeAlpha, _vm.UpdateIncludeBeta);
+            {
+                _updateCheckRetry.Start();
+            }
             else
+            {
                 // Logged so a "it never updates" report is not ambiguous between the check
                 // failing and the check never having been asked for.
                 Services.AppLog.Info("Update: skipped - auto-update is turned off");
+            }
+
+            // The launch attempts are simply each schedule's first, due immediately - run
+            // now rather than on the next retry tick, but through the same claim, so a
+            // slow first attempt can never be joined by a duplicate.
+            RunDueStartupChecks();
         };
     }
+
+    /// <summary>
+    /// Starts whichever launch check is due. Shared by the launch path and the retry tick.
+    ///
+    /// The update check is gated on AutoUpdate before it is claimed, on every attempt and
+    /// not only the first: turning auto-update off must stop a retry that was scheduled
+    /// while it was still on, since with it off the widget never checks GitHub Releases and
+    /// never restarts itself. Turned back on, the schedule resumes where it stood.
+    /// </summary>
+    private void RunDueStartupChecks()
+    {
+        if (_checkInRetry.TryClaimAttempt()) RunCheckIn();
+        if (_vm.AutoUpdate && _updateCheckRetry.TryClaimAttempt()) RunUpdateCheck();
+    }
+
+    /// <summary>
+    /// The OS's network-change event, raised on a thread-pool thread. StartupRetry is
+    /// UI-thread-only, so the nudge is posted there rather than applied here.
+    /// </summary>
+    private void OnNetworkChanged(object? sender, EventArgs e) => Dispatcher.UIThread.Post(() =>
+    {
+        if (_shuttingDown) return;
+        _checkInRetry.NetworkChanged();
+        _updateCheckRetry.NetworkChanged();
+    });
+
+    /// <summary>
+    /// Whether restarting into an update right now would throw away something the user is
+    /// halfway through: a dialog open over the widget (the Claude sign-in waiting for its
+    /// pasted code, the colour picker), or the GitHub device-flow code on screen waiting to
+    /// be entered. UpdateService holds the restart while this is true.
+    /// </summary>
+    private bool BusyForRestart() =>
+        OwnedWindows.Count > 0 || !string.IsNullOrEmpty(_vm.SignInCode);
 
     /// <summary>
     /// Runs a refresh and repaints the tray ring once it completes. The single hook every
@@ -279,6 +359,49 @@ public partial class MainWindow : Window
         await _vm.RefreshAsync(_cts.Token, force);
         UpdateTrayIcon();
     }, context);
+
+    /// <summary>
+    /// Runs the check-in and, if it fails on what looks like the network not being up yet
+    /// (a VPN client such as ZScaler still starting), arms a retry rather than losing the
+    /// one shot the launch path gives it - see StartupRetry.
+    ///
+    /// RecordAttempt runs in a finally rather than after the await: it is what clears the
+    /// schedule's in-flight state, so skipping it on an unexpected exception would park the
+    /// schedule for the rest of the session. An exception that escapes PingHomeAsync is
+    /// not a transport failure it decided to report - it is a bug - so the attempt is
+    /// recorded settled and RunSafely still logs it.
+    ///
+    /// The await deliberately resumes on the UI thread (no ConfigureAwait(false)), which is
+    /// what keeps StartupRetry single-threaded.
+    /// </summary>
+    private void RunCheckIn() => RunSafely(async () =>
+    {
+        var settled = true;
+        try
+        {
+            settled = await Services.CheckInService.PingHomeAsync(_cts.Token);
+        }
+        finally
+        {
+            _checkInRetry.RecordAttempt(settled);
+        }
+    }, "check-in");
+
+    /// <summary>Same retry treatment as RunCheckIn, for the GitHub update check.</summary>
+    private void RunUpdateCheck() => RunSafely(async () =>
+    {
+        var settled = true;
+        try
+        {
+            settled = await Services.UpdateService.CheckOnLaunchAsync(
+                _vm.UpdateIncludeAlpha, _vm.UpdateIncludeBeta,
+                stillWanted: () => _vm.AutoUpdate, busy: BusyForRestart, _cts.Token);
+        }
+        finally
+        {
+            _updateCheckRetry.RecordAttempt(settled);
+        }
+    }, "update check");
 
     /// <summary>
     /// Sets cursors in code rather than XAML: a control that paints its own background -
@@ -825,7 +948,19 @@ public partial class MainWindow : Window
         // The close button is a minimise unless the user has turned that off, or this is a
         // genuine quit from the tray menu. Position is saved either way, so the widget
         // reopens where it was left even if the process is killed while hidden.
-        if (!_exiting && _vm.CloseToTray)
+        //
+        // Only a close aimed at this window is a minimise. Windows shutting down or signing
+        // out closes every window through here too (the lifetime passes OSShutdown), and
+        // intercepting that did double damage: HideToTray recorded HiddenInTray = true, so a
+        // widget left on screen came back hidden in the tray after the next boot, and the
+        // cancelled close vetoed the shutdown itself, leaving Windows to report the
+        // application as blocking it until it was killed. ApplicationShutdown is the same
+        // request raised by the lifetime rather than the OS (Quit on macOS, or Shutdown()),
+        // and is just as much an instruction to end the process.
+        var shutdown = e.CloseReason is WindowCloseReason.OSShutdown
+            or WindowCloseReason.ApplicationShutdown;
+
+        if (!_exiting && !shutdown && _vm.CloseToTray)
         {
             e.Cancel = true;
             HideToTray(explain: true);
@@ -843,11 +978,14 @@ public partial class MainWindow : Window
 
         _shuttingDown = true;
 
-        // A real close, whether from ExitApplication (which already set this) or the close
-        // button with CloseToTray off, which reaches here without ever going through it.
+        // A real close, whether from ExitApplication (which already set this), the close
+        // button with CloseToTray off, or the OS shutting down - the last two reach here
+        // without ever going through it.
         //
         // Only cleared when the window was actually shown at this moment: exiting from the
         // visible window is a "back to normal" quit and the next launch should show again.
+        // An OS shutdown follows the same rule, so the next boot brings back whichever of
+        // the two the user had when the machine went down.
         // Exiting from the tray menu's own "Exit" while the widget was already hidden is
         // not that - IsVisible is already false there, HiddenInTray already says so (set by
         // whichever HideToTray got it there), and clearing it here would undo exactly the
@@ -858,8 +996,17 @@ public partial class MainWindow : Window
         SavePosition();
         _timer.Stop();
         _countdownTimer.Stop();
+        _retryTimer.Stop();
         _trayClickTimer?.Stop();     // null when the desktop has no tray
         _cts.Cancel();
+
+        // A static event: left hooked, it would keep this closed window reachable and keep
+        // posting nudges at it for as long as the process lingers.
+        if (_networkHooked)
+        {
+            System.Net.NetworkInformation.NetworkChange.NetworkAddressChanged -= OnNetworkChanged;
+            _networkHooked = false;
+        }
 
         // Explicitly disposed: a tray icon can otherwise linger in the notification area
         // until the user hovers over it. The notifier's own hidden icon needs the same,
