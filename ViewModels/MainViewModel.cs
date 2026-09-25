@@ -1322,6 +1322,30 @@ public sealed class MainViewModel : INotifyPropertyChanged
     }
 
     /// <summary>
+    /// The auto-update menu item's tooltip, built from UpdateService.RecheckInterval rather
+    /// than typed beside it in the XAML, so the menu cannot drift from what the code does.
+    /// </summary>
+    public string AutoUpdateTooltip =>
+        $"Check for and silently install updates at launch and every {Describe(UpdateService.RecheckInterval)}";
+
+    /// <summary>
+    /// An interval in the largest whole unit that states it exactly, for "every ..." -
+    /// "4 hours", "90 minutes", "30 seconds", and a bare "hour" or "minute" for one of them.
+    /// Seconds are the floor: anything shorter is rounded to a whole second, never down to
+    /// zero.
+    /// </summary>
+    private static string Describe(TimeSpan span)
+    {
+        static string Count(long n, string unit) => n == 1 ? unit : $"{n} {unit}s";
+
+        if (span >= TimeSpan.FromHours(1) && span.Ticks % TimeSpan.TicksPerHour == 0)
+            return Count(span.Ticks / TimeSpan.TicksPerHour, "hour");
+        if (span >= TimeSpan.FromMinutes(1) && span.Ticks % TimeSpan.TicksPerMinute == 0)
+            return Count(span.Ticks / TimeSpan.TicksPerMinute, "minute");
+        return Count(Math.Max(1, (long)Math.Round(span.TotalSeconds)), "second");
+    }
+
+    /// <summary>
     /// Whether the update check (see Services/UpdateService.cs) will offer an alpha build.
     /// Defaults to off: only a real (bare X.Y.Z) release is offered until the user opts in.
     /// Independent of <see cref="UpdateIncludeBeta"/> - each checkbox is its own gate, so

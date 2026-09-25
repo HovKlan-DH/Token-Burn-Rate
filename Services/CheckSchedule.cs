@@ -7,29 +7,38 @@ using System.Threading.Tasks;
 namespace TokenBurnRate.Services;
 
 /// <summary>
-/// Retry schedule for the launch-only background calls that can lose their one shot to a
-/// VPN client (ZScaler and similar) still coming up when the widget starts -
-/// <see cref="CheckInService"/>'s ping-home and <see cref="UpdateService"/>'s GitHub check.
+/// When the window's two background calls run - <see cref="CheckInService"/>'s ping-home
+/// and <see cref="UpdateService"/>'s GitHub check. Both start at launch, which is exactly
+/// when a VPN client (ZScaler and similar) may still be coming up, so a call can lose its
+/// shot to a network that is not there yet.
 ///
-/// Both run once per launch, and a real failure (a rejected request, a server error) is
-/// final for the session. "The network is not routable yet" is not: it clears itself, often
-/// within seconds, but sometimes only once the user signs in to the VPN by hand - minutes or
-/// hours later. So a transport failure is retried quickly at first and then at a slow
-/// fallback cadence with no end, and a change in the machine's network addresses (the VPN
-/// adapter coming up) pulls the next attempt forward - see <see cref="NetworkChanged"/> - so
-/// the call lands soon after the network does instead of on whatever this schedule guessed.
+/// A real failure (a rejected request, a server error) settles an attempt, the same as a
+/// success. "The network is not routable yet" does not: it clears itself, often within
+/// seconds, but sometimes only once the user signs in to the VPN by hand - minutes or hours
+/// later. So a transport failure is retried quickly at first and then at a slow fallback
+/// cadence with no end, and a change in the machine's network addresses (the VPN adapter
+/// coming up) pulls the next attempt forward - see <see cref="NetworkChanged"/> - so the
+/// call lands soon after the network does instead of on whatever this schedule guessed.
+///
+/// A schedule built with a recheck interval does not stop once an attempt settles: it waits
+/// that long and runs again, and runs sooner when asked to - see
+/// <see cref="RequestAttempt"/>. The update check needs both: the widget is left running
+/// for days or weeks, so a check made only at launch never sees a release published after
+/// it, and a changed update setting makes the last answer stale. The check-in must have
+/// neither: it counts launches, and a repeat would count one twice.
 ///
 /// Single-threaded by design: every member runs on the UI thread. The window claims
 /// attempts from its retry tick, <see cref="RecordAttempt"/> runs in the continuation of an
 /// await started there (which resumes on the UI thread), and the window marshals the OS's
 /// network-change event onto the UI thread before calling <see cref="NetworkChanged"/>.
 ///
-/// Deadlines are kept on <see cref="Environment.TickCount64"/>, not the wall clock. At boot
-/// the clock is often corrected by time sync at the very moment the network comes up, which
-/// is exactly when this schedule runs: a wall-clock deadline would then be pushed an hour
-/// out, or have every remaining retry fire at once.
+/// Retry deadlines are kept on <see cref="Environment.TickCount64"/>, not the wall clock.
+/// At boot the clock is often corrected by time sync at the very moment the network comes
+/// up, which is exactly when the retries run: a wall-clock deadline would then be pushed an
+/// hour out, or fire at once. The recheck deadline is kept on both clocks - see
+/// <see cref="_recheckDueUtc"/>.
 /// </summary>
-public sealed class StartupRetry
+public sealed class CheckSchedule
 {
     /// <summary>
     /// Delay before each retry after a transport failure, in order - not a formula, so the
@@ -66,28 +75,66 @@ public sealed class StartupRetry
     /// </summary>
     private static readonly TimeSpan MinGap = TimeSpan.FromSeconds(15);
 
+    /// <summary>
+    /// How long after the last change to a setting the attempt it asked for runs. A user
+    /// moving from release-only to BETA who misclicks ALPHA first should get one attempt with
+    /// the settings they ended on, not one per click - each attempt spends a GitHub API call,
+    /// and one started on the in-between state could download a build they never meant to
+    /// allow. The context menu closes after every click, so correcting a misclick means
+    /// opening it again and finding the Advanced submenu: this allows for that, where a few
+    /// seconds would not. The window also holds an update restart while the menu is open
+    /// (see MainWindow.BusyForRestart), which covers a correction slower than this.
+    /// </summary>
+    private static readonly TimeSpan SettleDelay = TimeSpan.FromSeconds(15);
+
     private enum State { Idle, Waiting, InFlight, Settled }
+
+    /// <summary>How long after a settled attempt the next one runs, or null for a schedule
+    /// that is done once an attempt settles.</summary>
+    private readonly TimeSpan? _recheckAfter;
 
     private State _state = State.Idle;
     private int _failures;
     private long _dueAt;
     private long _lastEndedAt;
 
+    /// <summary>
+    /// The recheck's deadline on the wall clock, set alongside <see cref="_dueAt"/>'s tick
+    /// deadline while a recheck is waiting and null otherwise; the attempt is due when either
+    /// has passed. TickCount64 does not advance through sleep on Linux or macOS (.NET reads
+    /// CLOCK_MONOTONIC and CLOCK_UPTIME_RAW there), so on a laptop awake an hour a day the
+    /// tick deadline alone would turn a four-hour recheck into a four-day one; Windows counts
+    /// sleep and would not. The wall clock covers that, and the tick deadline still covers a
+    /// wall clock stepped backwards. A wall clock stepped forwards fires the recheck early,
+    /// which at this spacing costs one extra attempt and nothing else - unlike the retries,
+    /// where the same step at boot would matter, which is why they stay on ticks alone.
+    /// </summary>
+    private DateTime? _recheckDueUtc;
+
     /// <summary>Set when the network changed while an attempt was running, so a failure of
     /// that attempt - probably started on the old network - retries soon rather than on
     /// the regular schedule.</summary>
     private bool _changedWhileInFlight;
 
+    /// <summary>Set when <see cref="RequestAttempt"/> was called while an attempt was running.
+    /// That attempt was started before whatever the request was about, so the next one
+    /// follows it soon rather than on the regular schedule.</summary>
+    private bool _requestedWhileInFlight;
+
+    /// <param name="recheckAfter">Null (the default) for a call made once per launch;
+    /// otherwise how long after each settled attempt the next one is due.</param>
+    public CheckSchedule(TimeSpan? recheckAfter = null) => _recheckAfter = recheckAfter;
+
     /// <summary>
     /// Arms the schedule with its first attempt due immediately. Until this is called the
-    /// schedule is idle and never hands out an attempt - the update check is only started
-    /// when auto-update is on.
+    /// schedule is idle and never hands out an attempt.
     /// </summary>
     public void Start()
     {
         if (_state != State.Idle) return;
         _state = State.Waiting;
         _dueAt = Now;
+        _recheckDueUtc = null;
     }
 
     /// <summary>
@@ -102,23 +149,83 @@ public sealed class StartupRetry
     /// </summary>
     public bool TryClaimAttempt()
     {
-        if (_state != State.Waiting || Now < _dueAt) return false;
+        if (_state != State.Waiting || !Due) return false;
 
         _state = State.InFlight;
         _changedWhileInFlight = false;
+        _requestedWhileInFlight = false;
         return true;
+    }
+
+    private bool Due =>
+        Now >= _dueAt || (_recheckDueUtc is { } utc && DateTime.UtcNow >= utc);
+
+    /// <summary>
+    /// Asks for an attempt soon rather than whenever the schedule would next run one - the
+    /// user changed what the call does (the update settings), so the last attempt's answer
+    /// no longer holds. A waiting schedule brings its next attempt to <see cref="SettleDelay"/>
+    /// from now, but never sooner than <see cref="MinGap"/> after the last attempt ended, so
+    /// clicking a setting back and forth cannot turn into a burst of attempts. If an attempt
+    /// is running, the request is remembered and the next attempt follows that same gap
+    /// after it ends.
+    ///
+    /// Only meaningful for a schedule with a recheck interval. One without is finished once
+    /// an attempt settles, and an idle schedule has nothing armed yet to bring forward.
+    /// </summary>
+    public void RequestAttempt()
+    {
+        switch (_state)
+        {
+            case State.Waiting:
+                // Set outright rather than only if sooner: every further request moves the
+                // attempt to SettleDelay after itself, so a run of clicks is acted on once,
+                // with the settings it ended on. A retry that was due sooner is moved by at
+                // most that delay, or to MinGap after the last attempt ended.
+                _dueAt = NotBefore(Now + (long)SettleDelay.TotalMilliseconds);
+                _recheckDueUtc = null;
+                break;
+
+            case State.InFlight:
+                _requestedWhileInFlight = true;
+                break;
+        }
     }
 
     /// <summary>
     /// Call after every claimed attempt. <paramref name="settled"/> is the bool
-    /// CheckInService.PingHomeAsync and UpdateService.CheckOnLaunchAsync return: true for a
-    /// success or a failure not worth retrying, false only for a transport-shaped failure.
+    /// CheckInService.PingHomeAsync and UpdateService.CheckAsync return: true for a success
+    /// or a failure not worth retrying, false only for a transport-shaped failure. A settled
+    /// attempt ends the schedule, or with a recheck interval sets the next one that far out
+    /// - or <see cref="MinGap"/> out, if an attempt was requested while this one ran.
     /// </summary>
     public void RecordAttempt(bool settled)
     {
         if (_state != State.InFlight) return;
 
         _lastEndedAt = Now;
+        _recheckDueUtc = null;
+
+        if (settled && _recheckAfter is { } recheck)
+        {
+            // A fresh start rather than a continuation of the backoff: a failure on the next
+            // round is a new outage, which deserves the quick retries again. Clearing the
+            // count also keeps NetworkChanged from pulling this wait forward - it is a
+            // regular recheck, not a retry waiting on the network.
+            _failures = 0;
+            _state = State.Waiting;
+
+            if (_requestedWhileInFlight)
+            {
+                _dueAt = _lastEndedAt + (long)MinGap.TotalMilliseconds;
+            }
+            else
+            {
+                _dueAt = _lastEndedAt + (long)recheck.TotalMilliseconds;
+                _recheckDueUtc = DateTime.UtcNow + recheck;
+            }
+
+            return;
+        }
 
         if (settled)
         {
@@ -131,7 +238,7 @@ public sealed class StartupRetry
         var delay = _failures < Delays.Length ? Delays[_failures] : SlowRetry;
         _failures++;
 
-        if (_changedWhileInFlight && MinGap < delay) delay = MinGap;
+        if ((_changedWhileInFlight || _requestedWhileInFlight) && MinGap < delay) delay = MinGap;
 
         _state = State.Waiting;
         _dueAt = _lastEndedAt + (long)delay.TotalMilliseconds;
@@ -142,15 +249,15 @@ public sealed class StartupRetry
     /// schedule still waiting on a transport failure brings its next attempt forward to
     /// <see cref="AfterNetworkChange"/> from now (never sooner than <see cref="MinGap"/> after
     /// the last attempt ended); one with an attempt running remembers it, so a failure of
-    /// that attempt retries soon. An idle or settled schedule has nothing to bring forward.
+    /// that attempt retries soon. An idle or settled schedule has nothing to bring forward,
+    /// and neither has one waiting on a recheck - that is not waiting on the network.
     /// </summary>
     public void NetworkChanged()
     {
         switch (_state)
         {
             case State.Waiting when _failures > 0:
-                var soon = Math.Max(Now + (long)AfterNetworkChange.TotalMilliseconds,
-                                    _lastEndedAt + (long)MinGap.TotalMilliseconds);
+                var soon = NotBefore(Now + (long)AfterNetworkChange.TotalMilliseconds);
                 if (soon < _dueAt) _dueAt = soon;
                 break;
 
@@ -159,6 +266,13 @@ public sealed class StartupRetry
                 break;
         }
     }
+
+    /// <summary>
+    /// <paramref name="earliest"/>, or <see cref="MinGap"/> after the last attempt ended if
+    /// that is later - the floor under everything that brings an attempt forward.
+    /// </summary>
+    private long NotBefore(long earliest) =>
+        Math.Max(earliest, _lastEndedAt + (long)MinGap.TotalMilliseconds);
 
     private static long Now => Environment.TickCount64;
 

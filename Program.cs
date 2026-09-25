@@ -30,6 +30,12 @@ namespace TokenBurnRate
                 // finishes install/uninstall/update bookkeeping and, for some verbs, exits
                 // the process immediately without ever starting the UI. Inside the try so a
                 // failure here is recorded the same as any other startup crash.
+                //
+                // Velopack's auto-apply on startup stays at its default, on: an update that
+                // was downloaded but whose restart was still held when the user exited is
+                // installed here, before the UI starts. A download the update check decides
+                // against is deleted instead (UpdateService.DiscardDownload), so nothing
+                // unwanted is waiting here to be applied.
                 VelopackApp.Build().Run();
 
                 // Only after Run(). Velopack performs its bookkeeping by relaunching this

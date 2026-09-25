@@ -94,7 +94,7 @@ public sealed class AppState
     /// <summary>
     /// Whether the widget checks for and silently applies updates at all, set from the
     /// context menu's "Auto-update to newest version". Absent means never set, and the
-    /// widget defaults to on - see UpdateService.CheckOnLaunchAsync.
+    /// widget defaults to on - see UpdateService.CheckAsync.
     /// </summary>
     [JsonPropertyName("autoUpdate")]
     public bool? AutoUpdate { get; set; }

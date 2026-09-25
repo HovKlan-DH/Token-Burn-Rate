@@ -210,7 +210,7 @@
           <Separator/>
           <MenuItem Header="Auto-update to newest version" ToggleType="CheckBox"
                     IsChecked="{Binding AutoUpdate, Mode=TwoWay}"
-                    ToolTip.Tip="Check for and silently install updates on launch"/>
+                    ToolTip.Tip="{Binding AutoUpdateTooltip}"/>
           <MenuItem Header="Allow updates to newer BETA version" ToggleType="CheckBox"
                     IsChecked="{Binding UpdateIncludeBeta, Mode=TwoWay}"
                     IsEnabled="{Binding AutoUpdate}"

@@ -19,10 +19,18 @@ and run once is one file" - the user explicitly chose this tradeoff over staying
 single-file-forever with no auto-update.
 
 **Update flow is silent/automatic, not notify-and-prompt.** `Services/UpdateService.cs`
-checks on every launch (hooked into `MainWindow.axaml.cs`'s `Opened` handler, alongside
-`CheckInService.PingHomeAsync()`, both retried by `StartupRetry` when the network is not
-up yet), and if found, downloads and calls
-`ApplyUpdatesAndRestart` immediately - no dialog, no menu interaction. A Windows-only
+checks at launch (hooked into `MainWindow.axaml.cs`'s `Opened` handler, alongside
+`CheckInService.PingHomeAsync()`, both retried by `CheckSchedule` when the network is not
+up yet), then every `UpdateService.RecheckInterval` (4 hours as of 2026-09-25) while
+running, and a few seconds after any update setting changes; if found, it downloads and
+calls `ApplyUpdatesAndRestart` immediately - no dialog, no menu interaction. The recheck was
+added 2026-09-25 after a 1.1.0 left running never picked up a new release: every release up
+to and including 1.1.0 checked only at launch, and the app often runs for weeks without a
+restart. A 1.2.0 without the recheck was published on 2026-09-25 and withdrawn the same day
+(release and tag deleted). Any install that took it reports 1.2.0 and will never be offered
+a rebuild under that same number - relevant if a machine "never updates" after 1.2.0 ships
+again. Velopack's auto-apply on startup stays on; a download the check abandons (a setting
+changed mid-download) is deleted instead, so it is not installed at the next launch. A Windows-only
 `TrayNotifier` balloon announces the restart where supported. This was a deliberate choice
 over a "click to install" tray-menu flow - the user picked "set and forget" explicitly when
 asked.

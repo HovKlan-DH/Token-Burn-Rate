@@ -18,7 +18,7 @@ namespace TokenBurnRate.Services;
 /// already expects (see its source for the exact contract). Failures - offline, DNS,
 /// timeout, server error - are swallowed, since a check-in must never delay startup or
 /// surface an error for something the user cannot act on. One that failed before anything
-/// was sent is retried by the window's <see cref="StartupRetry"/> schedule.
+/// was sent is retried by the window's <see cref="CheckSchedule"/> schedule.
 /// </summary>
 public static class CheckInService
 {
@@ -65,7 +65,7 @@ public static class CheckInService
     /// <summary>
     /// Posts the check-in and reports whether the attempt is settled: true for a successful
     /// post or a failure not worth retrying, false when it failed before anything was sent
-    /// (see <see cref="StartupRetry.FailedBeforeSending"/>) - the network simply is not up
+    /// (see <see cref="CheckSchedule.FailedBeforeSending"/>) - the network simply is not up
     /// yet, and the caller should try again rather than write this launch off. Never throws.
     ///
     /// <paramref name="shutdown"/> is the app's shutdown token: cancelling it abandons an
@@ -113,14 +113,14 @@ public static class CheckInService
             // produces. A server error would fail identically on retry, and a timeout after
             // connecting may already have been recorded, so a retry would count this launch
             // twice.
-            return !StartupRetry.FailedBeforeSending(ex);
+            return !CheckSchedule.FailedBeforeSending(ex);
         }
     }
 
     /// <summary>
     /// Opens the TCP connection under <see cref="ConnectTimeout"/>, reporting expiry as a
     /// timed-out socket - which the handler surfaces as a ConnectionError, the "nothing was
-    /// sent" shape StartupRetry.FailedBeforeSending recognises.
+    /// sent" shape CheckSchedule.FailedBeforeSending recognises.
     /// </summary>
     private static async ValueTask<Stream> ConnectAsync(SocketsHttpConnectionContext context,
                                                         CancellationToken ct)

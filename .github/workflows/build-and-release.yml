@@ -22,8 +22,24 @@ name: Build, Scan and Release
 # reads at runtime. There is still no unit-test gate here - see build-check below, which
 # takes its place.
 #
+# Between the builds and the release, every downloadable file is scanned by VirusTotal -
+# see the virustotal-scan job and the "virustotal" input, which decides whether detections
+# stop the release or are only reported.
+#
 on:
   workflow_dispatch:
+    inputs:
+      # See the virustotal-scan job. "report" is the default while the thresholds are new:
+      # a release or two in that mode shows what the application normally scores, before
+      # "gate" is trusted to stop a release on its own.
+      virustotal:
+        description: 'VirusTotal scan - report: list results only / gate: also stop the release on detections / skip: no scan'
+        type: choice
+        options:
+          - report
+          - gate
+          - skip
+        default: report
 
 env:
   PACK_ID: Token-Burn-Rate
@@ -66,6 +82,30 @@ jobs:
           else
             echo "is_prerelease=false" >> $GITHUB_OUTPUT
           fi
+
+      # A version already tagged must never be released again. The release step would
+      # reuse that tag and overwrite the published files under it, and every install already
+      # on that version would never be offered the new build: an update has to be a higher
+      # version, not the same one rebuilt. The tag is only created by a release that passed,
+      # so re-running a failed release of the same version is unaffected.
+      - name: Refuse a version that is already released
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          # --exit-code: 0 = the tag exists, 2 = it does not, anything else = the lookup
+          # itself failed, which must not pass for "not tagged".
+          set +e
+          git ls-remote --exit-code --tags origin "refs/tags/$VERSION" > /dev/null
+          status=$?
+          set -e
+
+          case $status in
+            0) echo "::error::Version $VERSION is already tagged. Bump AssemblyVersion/InformationalVersion in ${{ env.PROJECT }} before releasing."
+               exit 1 ;;
+            2) echo "Version $VERSION is not tagged yet - OK to release." ;;
+            *) echo "::error::Could not check whether $VERSION is already tagged (git ls-remote exit $status)."
+               exit 1 ;;
+          esac
 
   ###############################################################
   # BUILD GATE
@@ -162,24 +202,30 @@ jobs:
             -p:Version=${{ needs.determine-version.outputs.version }} `
             -o publish/win-x64
 
-      - name: Sign executable
-        shell: powershell
-        env:
-          YUBIKEY_PIN: ${{ secrets.YUBIKEY_PIN }}
-        run: |
-          java -jar C:\tools\jsign-6.0.jar `
-            --storetype YUBIKEY `
-            --storepass "$env:YUBIKEY_PIN" `
-            --tsaurl http://timestamp.digicert.com `
-            --alg SHA-256 `
-            publish/win-x64/${{ env.EXE_WINDOWS }}
-
       - name: Install vpk
         shell: powershell
         run: dotnet tool install -g vpk
 
-      - name: Pack with Velopack
+      # Signing happens inside vpk pack, not around it. The workflow used to sign only the
+      # main exe before packing and Setup.exe after, which left 30 of the package's 223
+      # program files unsigned: the application's own code (Token-Burn-Rate.dll - the exe
+      # is only .NET's small launcher), the third-party libraries their authors ship
+      # unsigned, and the two programs vpk adds while packing - Squirrel.exe (the updater)
+      # and the launcher stub that becomes Token-Burn-Rate.exe in the install folder, which
+      # the Start menu shortcut and autostart run. Only vpk can sign those at the right
+      # moment, and nothing inside the package can be signed afterwards: its SHA-256 goes
+      # into the update feed. Given a template, vpk signs every .exe/.dll in the package
+      # that is not already validly signed (the .NET runtime keeps Microsoft's signature),
+      # then Setup.exe once it is built.
+      #
+      # {{file...}} hands jsign up to 10 files per run (vpk's --signParallel default), so
+      # one YubiKey login covers each batch. vpk runs the template through cmd.exe, so the
+      # PIN is not written into it: jsign reads it from the environment itself
+      # (env:YUBIKEY_PIN), which also keeps it out of vpk's log if a signing run fails.
+      - name: Pack and sign with Velopack
         shell: powershell
+        env:
+          YUBIKEY_PIN: ${{ secrets.YUBIKEY_PIN }}
         run: |
           vpk pack `
             --packId ${{ env.PACK_ID }} `
@@ -190,20 +236,8 @@ jobs:
             --noPortable `
             --icon "Assets/icon.ico" `
             --packTitle "Token Burn Rate" `
+            --signTemplate "java -jar C:\tools\jsign-6.0.jar --storetype YUBIKEY --storepass env:YUBIKEY_PIN --tsaurl http://timestamp.digicert.com --alg SHA-256 {{file...}}" `
             --outputDir velopack-output
-
-      - name: Sign Velopack installer
-        shell: powershell
-        env:
-          YUBIKEY_PIN: ${{ secrets.YUBIKEY_PIN }}
-        run: |
-          $installer = Get-ChildItem velopack-output\*-Setup.exe | Select-Object -First 1
-          java -jar C:\tools\jsign-6.0.jar `
-            --storetype YUBIKEY `
-            --storepass "$env:YUBIKEY_PIN" `
-            --tsaurl http://timestamp.digicert.com `
-            --alg SHA-256 `
-            $installer.FullName
 
       - name: Upload Velopack artifacts
         uses: actions/upload-artifact@v7
@@ -346,6 +380,64 @@ jobs:
           path: velopack-output/*
 
   ###############################################################
+  # VIRUSTOTAL SCAN
+  ###############################################################
+  # Uploads every file a user can download or be updated to - the installers and the
+  # update packages - to VirusTotal, after the builds and before anything is published.
+  # The Windows files are scanned as shipped, signed. The rules live in
+  # .github/scripts/virustotal-scan.sh, which .github/workflows/virustotal-scan.yml also
+  # runs against an already published release.
+  #
+  # "gate" fails this job on detections over the script's thresholds, and since
+  # create-release needs it, nothing is published: the tag only comes into existence in
+  # that step, so a stopped release leaves nothing behind and can be re-run. "report"
+  # scans and lists the results on the run's summary page but never stops a release, and
+  # "skip" does not scan at all - the way past a false positive or a VirusTotal outage.
+  #
+  # Skipped step by step rather than with a job-level "if": a skipped job would take
+  # create-release down with it, since a job whose needs were skipped is skipped too.
+  #
+  # For the same reason every step outside gate mode carries continue-on-error. The script
+  # itself never fails in report mode, but a step can fail around it - an artifact that
+  # will not download, or the step timeout if VirusTotal hangs - and a failed job would
+  # take create-release down just the same. The script's own 45-minute budget ends it well
+  # before the step's 55 and the job's 60, so normally it finishes with a result either way.
+  #
+  # Needs the VT_API_KEY secret - the API key of a free VirusTotal account.
+  virustotal-scan:
+    name: VirusTotal scan
+    needs: [build-windows, build-linux, build-macos]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        if: inputs.virustotal != 'skip'
+        continue-on-error: ${{ inputs.virustotal != 'gate' }}
+        uses: actions/checkout@v5
+
+      - name: Download all Velopack artifacts
+        if: inputs.virustotal != 'skip'
+        continue-on-error: ${{ inputs.virustotal != 'gate' }}
+        uses: actions/download-artifact@v8
+        with:
+          path: scan-assets
+          merge-multiple: true
+
+      - name: Scan with VirusTotal
+        if: inputs.virustotal != 'skip'
+        continue-on-error: ${{ inputs.virustotal != 'gate' }}
+        timeout-minutes: 55
+        env:
+          VT_API_KEY: ${{ secrets.VT_API_KEY }}
+          VT_MODE: ${{ inputs.virustotal }}
+        run: |
+          bash .github/scripts/virustotal-scan.sh "$VT_MODE" \
+            scan-assets/*-Setup.exe \
+            scan-assets/*.AppImage \
+            scan-assets/*-Setup.pkg \
+            scan-assets/*.nupkg
+
+  ###############################################################
   # CREATE GITHUB RELEASE
   ###############################################################
   create-release:
@@ -353,7 +445,7 @@ jobs:
     runs-on: ubuntu-latest
     # security-scan is disabled (see its "if: false") until the repo goes public, so it
     # is deliberately left out of this list rather than depended on while skipped.
-    needs: [determine-version, build-windows, build-linux, build-macos]
+    needs: [determine-version, build-windows, build-linux, build-macos, virustotal-scan]
     permissions:
       contents: write
     steps:

@@ -24,13 +24,16 @@ public partial class MainWindow : Window
     private TrayIcon? _tray;
 
     /// <summary>
-    /// Retry schedules for the two launch-only background calls that can lose their single
+    /// Retry schedules for the two background calls started at launch that can lose their
     /// shot to a VPN client (ZScaler and similar) still coming up when the window opens -
-    /// see StartupRetry. Independent of each other: mailscan.dk and github.com can become
-    /// reachable at different times.
+    /// see CheckSchedule. Independent of each other: mailscan.dk and github.com can become
+    /// reachable at different times. The check-in runs once per launch; the update check
+    /// also runs again every UpdateService.RecheckInterval, so a widget left running for
+    /// weeks still picks up a release published after it started.
     /// </summary>
-    private readonly Services.StartupRetry _checkInRetry = new();
-    private readonly Services.StartupRetry _updateCheckRetry = new();
+    private readonly Services.CheckSchedule _checkInSchedule = new();
+    private readonly Services.CheckSchedule _updateCheckSchedule =
+        new(recheckAfter: Services.UpdateService.RecheckInterval);
 
     /// <summary>Whether OnNetworkChanged is hooked to the OS's static network-change event,
     /// so OnClosing unhooks only what was actually hooked.</summary>
@@ -99,6 +102,14 @@ public partial class MainWindow : Window
     /// <summary>Resizes the window frame when the text scale changes. Kept so OnClosing can
     /// unhook it, for the same reason as _soloCursorHandler.</summary>
     private PropertyChangedEventHandler? _fontScaleHandler;
+
+    /// <summary>Asks for an update check when one of the three update settings changes.
+    /// Kept so OnClosing can unhook it, for the same reason as _soloCursorHandler.</summary>
+    private PropertyChangedEventHandler? _updateSettingsHandler;
+
+    /// <summary>The update tier ceiling the BETA/ALPHA checkboxes last stood at, so
+    /// _updateSettingsHandler can tell a change that moves it from one that does not.</summary>
+    private Services.UpdateService.Tier _updateTier;
 
     /// <summary>The widget's width at FontScale 1.0, from the XAML. Multiplied by the current
     /// scale in ApplyFontScale so the frame grows and shrinks along with the text inside it -
@@ -196,6 +207,41 @@ public partial class MainWindow : Window
         SetUpTray();
         _vm.LoadCollapsedState();
 
+        // Changing an update setting runs a check soon after rather than at the next
+        // recheck: the last check answered for the old settings. Hooked after
+        // LoadCollapsedState so restoring the saved values is not taken for a change - and
+        // the schedule is not armed until Opened anyway.
+        //
+        // A request made while a check is running is kept by the schedule and run right after
+        // it (see CheckSchedule.RequestAttempt), so no case here needs to know whether one is.
+        _updateTier = Services.UpdateService.MaxTierRequested(_vm.UpdateIncludeAlpha, _vm.UpdateIncludeBeta);
+        _updateSettingsHandler = (_, e) =>
+        {
+            switch (e.PropertyName)
+            {
+                // Turned off: nothing to run, and RunDueBackgroundChecks would not claim it
+                // anyway - a running check notices at its next gate and stops.
+                case nameof(ViewModels.MainViewModel.AutoUpdate):
+                    if (_vm.AutoUpdate) RequestUpdateCheck("auto-update turned on");
+                    break;
+
+                // Only a change of the tier ceiling alters what a check can find. Ticking BETA
+                // while ALPHA is on moves nothing, and a check would only spend a GitHub API
+                // call to find the same answer. Narrowing it does ask for one: a check that was
+                // after an alpha when ALPHA was unticked stops without installing anything, and
+                // a full release beneath that alpha is still worth installing.
+                case nameof(ViewModels.MainViewModel.UpdateIncludeAlpha):
+                case nameof(ViewModels.MainViewModel.UpdateIncludeBeta):
+                    var tier = Services.UpdateService.MaxTierRequested(_vm.UpdateIncludeAlpha, _vm.UpdateIncludeBeta);
+                    if (tier == _updateTier) break;
+
+                    _updateTier = tier;
+                    if (_vm.AutoUpdate) RequestUpdateCheck($"update tier changed to {tier}");
+                    break;
+            }
+        };
+        _vm.PropertyChanged += _updateSettingsHandler;
+
         // Copilot's quota is a remote call and Claude's parse is incremental, so a 60s
         // cadence keeps the display live without hammering either source. Read after
         // LoadCollapsedState, which is what resolves it from the state file.
@@ -223,7 +269,7 @@ public partial class MainWindow : Window
             // which is why this must keep running while the window is hidden too.
             if (_vm.RetryDue) RunRefresh("startup retry", force: false);
 
-            RunDueStartupChecks();
+            RunDueBackgroundChecks();
         };
         _retryTimer.Start();
 
@@ -291,13 +337,14 @@ public partial class MainWindow : Window
             RunRefresh("initial refresh");
 
             // Mandatory regardless of AutoUpdate: this is telemetry, not an update check.
-            _checkInRetry.Start();
+            _checkInSchedule.Start();
 
-            if (_vm.AutoUpdate)
-            {
-                _updateCheckRetry.Start();
-            }
-            else
+            // Armed even with auto-update off. RunDueBackgroundChecks will not claim an attempt
+            // until it is on, so the first check simply waits there - and runs soon after
+            // the user turns auto-update on, rather than only at the next launch.
+            _updateCheckSchedule.Start();
+
+            if (!_vm.AutoUpdate)
             {
                 // Logged so a "it never updates" report is not ambiguous between the check
                 // failing and the check never having been asked for.
@@ -307,43 +354,63 @@ public partial class MainWindow : Window
             // The launch attempts are simply each schedule's first, due immediately - run
             // now rather than on the next retry tick, but through the same claim, so a
             // slow first attempt can never be joined by a duplicate.
-            RunDueStartupChecks();
+            RunDueBackgroundChecks();
         };
     }
 
     /// <summary>
-    /// Starts whichever launch check is due. Shared by the launch path and the retry tick.
+    /// Starts whichever background check is due. Shared by the launch path and the retry
+    /// tick, which also runs the update check's periodic rechecks.
     ///
     /// The update check is gated on AutoUpdate before it is claimed, on every attempt and
-    /// not only the first: turning auto-update off must stop a retry that was scheduled
-    /// while it was still on, since with it off the widget never checks GitHub Releases and
-    /// never restarts itself. Turned back on, the schedule resumes where it stood.
+    /// not only the first: turning auto-update off must stop a retry or recheck that was
+    /// scheduled while it was still on, since with it off the widget never checks GitHub
+    /// Releases and never restarts itself. Turned back on, the schedule resumes where it
+    /// stood, and an attempt that fell due in the meantime runs on the next tick.
     /// </summary>
-    private void RunDueStartupChecks()
+    private void RunDueBackgroundChecks()
     {
-        if (_checkInRetry.TryClaimAttempt()) RunCheckIn();
-        if (_vm.AutoUpdate && _updateCheckRetry.TryClaimAttempt()) RunUpdateCheck();
+        if (_checkInSchedule.TryClaimAttempt()) RunCheckIn();
+        if (_vm.AutoUpdate && _updateCheckSchedule.TryClaimAttempt()) RunUpdateCheck();
     }
 
     /// <summary>
-    /// The OS's network-change event, raised on a thread-pool thread. StartupRetry is
+    /// Asks the update schedule for a check soon (see CheckSchedule.RequestAttempt), with a
+    /// log line saying why, so a restart that follows can be traced back to the click or
+    /// the abandoned check that asked for it.
+    /// </summary>
+    private void RequestUpdateCheck(string why)
+    {
+        Services.AppLog.Info($"Update: {why}, check requested");
+        _updateCheckSchedule.RequestAttempt();
+    }
+
+    /// <summary>
+    /// The OS's network-change event, raised on a thread-pool thread. CheckSchedule is
     /// UI-thread-only, so the nudge is posted there rather than applied here.
     /// </summary>
     private void OnNetworkChanged(object? sender, EventArgs e) => Dispatcher.UIThread.Post(() =>
     {
         if (_shuttingDown) return;
-        _checkInRetry.NetworkChanged();
-        _updateCheckRetry.NetworkChanged();
+        _checkInSchedule.NetworkChanged();
+        _updateCheckSchedule.NetworkChanged();
     });
 
     /// <summary>
     /// Whether restarting into an update right now would throw away something the user is
     /// halfway through: a dialog open over the widget (the Claude sign-in waiting for its
-    /// pasted code, the colour picker), or the GitHub device-flow code on screen waiting to
-    /// be entered. UpdateService holds the restart while this is true.
+    /// pasted code, the colour picker), the GitHub device-flow code on screen waiting to be
+    /// entered, or the context menu open. UpdateService holds the restart while this is true.
+    ///
+    /// The menu counts because it is where the update settings live. A user who misclicks
+    /// ALPHA and reopens the menu to untick it must not be restarted into an alpha while
+    /// finding the checkbox - and the menu is a popup, not an owned window, so
+    /// OwnedWindows alone would not see it.
     /// </summary>
     private bool BusyForRestart() =>
-        OwnedWindows.Count > 0 || !string.IsNullOrEmpty(_vm.SignInCode);
+        OwnedWindows.Count > 0
+        || !string.IsNullOrEmpty(_vm.SignInCode)
+        || (Content as Border)?.ContextMenu?.IsOpen == true;
 
     /// <summary>
     /// Runs a refresh and repaints the tray ring once it completes. The single hook every
@@ -363,7 +430,7 @@ public partial class MainWindow : Window
     /// <summary>
     /// Runs the check-in and, if it fails on what looks like the network not being up yet
     /// (a VPN client such as ZScaler still starting), arms a retry rather than losing the
-    /// one shot the launch path gives it - see StartupRetry.
+    /// one shot the launch path gives it - see CheckSchedule.
     ///
     /// RecordAttempt runs in a finally rather than after the await: it is what clears the
     /// schedule's in-flight state, so skipping it on an unexpected exception would park the
@@ -372,7 +439,7 @@ public partial class MainWindow : Window
     /// recorded settled and RunSafely still logs it.
     ///
     /// The await deliberately resumes on the UI thread (no ConfigureAwait(false)), which is
-    /// what keeps StartupRetry single-threaded.
+    /// what keeps CheckSchedule single-threaded.
     /// </summary>
     private void RunCheckIn() => RunSafely(async () =>
     {
@@ -383,23 +450,36 @@ public partial class MainWindow : Window
         }
         finally
         {
-            _checkInRetry.RecordAttempt(settled);
+            _checkInSchedule.RecordAttempt(settled);
         }
     }, "check-in");
 
-    /// <summary>Same retry treatment as RunCheckIn, for the GitHub update check.</summary>
+    /// <summary>
+    /// Same retry treatment as RunCheckIn, for the GitHub update check.
+    ///
+    /// The settings are handed over as a snapshot the check re-reads on the UI thread at
+    /// each of its gates, so it judges the candidate it found against the settings as they
+    /// stand then, not as they were when it began.
+    ///
+    /// The position is saved before an update restart because Velopack ends the process
+    /// without OnClosing running, and OnClosing is where a visible widget's position is
+    /// otherwise saved. HiddenInTray needs nothing here: every hide and show already
+    /// records it.
+    /// </summary>
     private void RunUpdateCheck() => RunSafely(async () =>
     {
         var settled = true;
         try
         {
-            settled = await Services.UpdateService.CheckOnLaunchAsync(
-                _vm.UpdateIncludeAlpha, _vm.UpdateIncludeBeta,
-                stillWanted: () => _vm.AutoUpdate, busy: BusyForRestart, _cts.Token);
+            settled = await Services.UpdateService.CheckAsync(
+                settings: () => new(_vm.AutoUpdate, _vm.UpdateIncludeAlpha, _vm.UpdateIncludeBeta),
+                busy: BusyForRestart,
+                prepareRestart: () => { if (IsVisible) SavePosition(); },
+                _cts.Token);
         }
         finally
         {
-            _updateCheckRetry.RecordAttempt(settled);
+            _updateCheckSchedule.RecordAttempt(settled);
         }
     }, "update check");
 
@@ -1035,6 +1115,12 @@ public partial class MainWindow : Window
         {
             _vm.PropertyChanged -= fontScale;
             _fontScaleHandler = null;
+        }
+
+        if (_updateSettingsHandler is { } updateSettings)
+        {
+            _vm.PropertyChanged -= updateSettings;
+            _updateSettingsHandler = null;
         }
 
         base.OnClosing(e);
