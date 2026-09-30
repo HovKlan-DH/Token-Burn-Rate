@@ -62,7 +62,7 @@ These are the exact same numbers shown on the "Usage" page at `claude.ai`.
 
 <img width="480" height="225" alt="image" src="https://github.com/user-attachments/assets/02288300-b56f-4d18-86c3-6608b18053c2" />
 
-Your monthly **completions**, **chat**, and **premium request** usage. Anything not included
+Your monthly **completions**, **chat**, and **premium** (AI credit) usage. Anything not included
 in your plan is shown greyed out; anything unlimited shows as ∞.
 
 ### My Pace

@@ -10,6 +10,14 @@ public sealed class CopilotQuota
     public double Entitlement { get; init; }
     public double Remaining { get; init; }
     public double CreditsUsed { get; init; }
+
+    /// <summary>
+    /// What one unit of this bucket counts, as the captions name it ("credits",
+    /// "completions", "requests"). Carried per bucket because My Pace follows whichever
+    /// bucket is metered, and that is not the credit bucket on every plan.
+    /// </summary>
+    public required string Unit { get; init; }
+
     public bool Unlimited { get; init; }
     public bool HasQuota { get; init; }
 
@@ -222,6 +230,9 @@ public sealed class CopilotPacing
 {
     public double Entitlement { get; init; }
     public int BusinessDaysLeft { get; init; }
+
+    /// <summary>The unit of the bucket this pacing was built from - see <see cref="CopilotQuota.Unit"/>.</summary>
+    public required string Unit { get; init; }
 
     public double PerDayAllowance { get; init; }
     public double UsedToday { get; init; }

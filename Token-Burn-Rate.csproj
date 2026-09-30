@@ -8,11 +8,11 @@
 	<Description>Live Claude Code and GitHub Copilot usage.</Description>
 	<Copyright>©2026 Dennis Helligsø</Copyright>
 
-	<AssemblyVersion>1.2.0</AssemblyVersion>
-    <!--
-	<InformationalVersion>1.0.0-beta.11</InformationalVersion>
+	<AssemblyVersion>1.3.0</AssemblyVersion>
+	<!--
+	<InformationalVersion>1.3.0-beta.1</InformationalVersion>
 	-->
-	  <InformationalVersion>$(AssemblyVersion)</InformationalVersion>
+	<InformationalVersion>$(AssemblyVersion)</InformationalVersion>
 
 	<!-- Must stay below the two properties they read: MSBuild evaluates a PropertyGroup
 	     top-to-bottom, so placing these first silently resolved FileVersion to empty and

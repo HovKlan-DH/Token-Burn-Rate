@@ -74,6 +74,7 @@ public sealed class CopilotPacingService
         return new CopilotPacing
         {
             Entitlement = bucket.Entitlement,
+            Unit = bucket.Unit,
             BusinessDaysLeft = daysLeftInPeriod,
             PerDayAllowance = perDay,
             UsedToday = usedToday,

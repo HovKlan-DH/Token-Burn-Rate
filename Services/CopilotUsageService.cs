@@ -173,21 +173,24 @@ public sealed class CopilotUsageService
 
         if (root.TryGetProperty("quota_snapshots", out var snaps))
         {
-            AddQuota(status, snaps, "completions", "COMPLETIONS");
-            AddQuota(status, snaps, "chat", "CHAT");
-            AddQuota(status, snaps, "premium_interactions", "PREMIUM");
+            AddQuota(status, snaps, "completions", "COMPLETIONS", "completions");
+            AddQuota(status, snaps, "chat", "CHAT", "requests");
+            // GitHub replaced premium requests with AI Credits on 1 June 2026, but the
+            // bucket kept its old key - what it counts now is credits.
+            AddQuota(status, snaps, "premium_interactions", "PREMIUM", "credits");
         }
 
         return status;
     }
 
-    private static void AddQuota(CopilotStatus status, JsonElement snaps, string key, string label)
+    private static void AddQuota(CopilotStatus status, JsonElement snaps, string key, string label, string unit)
     {
         if (!snaps.TryGetProperty(key, out var q)) return;
 
         status.Quotas.Add(new CopilotQuota
         {
             Label = label,
+            Unit = unit,
             Entitlement = Dbl(q, "entitlement"),
             Remaining = Dbl(q, "quota_remaining"),
             CreditsUsed = Dbl(q, "credits_used"),

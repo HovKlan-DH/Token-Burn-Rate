@@ -1,8 +1,14 @@
-# 1.2.0, 2026-September-?
--------------------------
+# 1.3.0, 2026-September-26
+--------------------------
+- Fixed the text "tokens" were changed to "credits" for GitHub Copilot
+
+
+# 1.2.0, 2026-September-25
+--------------------------
 - Added it will instant-check for an update when enabling check for a newer version (or ALPHA/BETA)
 - Fixed it will recheck updates if there are network connectivity issues
-- Fixes it did never start with UI, even if UI was visible before computer shutdown
+- Fixed it did never start with UI, even if UI was visible before computer shutdown
+- Fixed all files are now digitally signed (where possible)
 
 
 # 1.1.0, 2026-September-16

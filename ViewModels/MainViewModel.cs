@@ -1883,7 +1883,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         PacingBars[0].SetMarkerWindow(
             new DateTimeOffset(todayStart), new DateTimeOffset(todayStart.AddDays(1)));
         Set(PacingBars[0], pacing.DayFraction, pacing.DayPercent,
-            pacing.UsedToday, pacing.PerDayAllowance);
+            pacing.UsedToday, pacing.PerDayAllowance, pacing.Unit);
 
         // Markers before Set, which assigns Fraction - the same ordering the Claude week bar's
         // poll uses, and for the same reason: the pace colours are derived from the fraction
@@ -1906,14 +1906,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
         if (weekEnd <= now) weekEnd = weekStart.AddDays(7);
         PacingBars[1].SetMarkerWindow(new DateTimeOffset(weekStart), new DateTimeOffset(weekEnd));
         Set(PacingBars[1], pacing.WeekFraction, pacing.WeekPercent,
-            pacing.UsedThisWeek, pacing.WeekBudget);
+            pacing.UsedThisWeek, pacing.WeekBudget, pacing.Unit);
 
         var (monthStart, monthEnd) = CalendarMonthWindow(now, status.ResetDate);
         PacingBars[2].SetMarkerWindow(monthStart, monthEnd);
         Set(PacingBars[2], pacing.MonthFraction, pacing.MonthPercent,
-            pacing.UsedThisPeriod, pacing.Entitlement);
+            pacing.UsedThisPeriod, pacing.Entitlement, pacing.Unit);
 
-        static void Set(BarViewModel bar, double fraction, double percent, double used, double budget)
+        static void Set(BarViewModel bar, double fraction, double percent, double used, double budget, string unit)
         {
             // Spending past the allowance is meaningful, so the number keeps climbing even
             // though the bar itself stops at full.
@@ -1925,7 +1925,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             // draw identically, and the overspend was legible only in the small print.
             var over = IsSpent(percent);
             bar.IsOverBudget = over;
-            bar.DetailText = $"{Warning(over)}{used:0} of {budget:0} tokens used";
+            bar.DetailText = $"{Warning(over)}{used:0} of {budget:0} {unit} used";
             bar.IsEnabled = true;
         }
     }
@@ -2450,7 +2450,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 // seeing at a glance rather than reading off the small print.
                 var spent = IsSpent(q.Percent);
                 bar.ValueText = $"{q.Percent:0}%";
-                bar.DetailText = $"{Warning(spent)}{q.Used:0} of {q.Entitlement:0} used";
+                bar.DetailText = $"{Warning(spent)}{q.Used:0} of {q.Entitlement:0} {q.Unit} used";
                 bar.Fraction = q.Fraction;
                 bar.IsEnabled = true;
                 bar.IsUnlimited = false;
