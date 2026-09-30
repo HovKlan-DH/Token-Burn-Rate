@@ -1593,7 +1593,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// </summary>
     private void UpdatePacingSubtitle()
     {
-        var days = $"{_pacingDaysLeft} work days left in month";
+        var days = $"{_pacingDaysLeft} work {(_pacingDaysLeft == 1 ? "day" : "days")} left in month";
         PacingSubtitle = CopilotVisible ? days : AppendReset(days);
     }
 
