@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -127,9 +128,64 @@ public sealed class AppState
     public double? FontScale { get; set; }
 
     /// <summary>
-    /// How many days of the week count as workdays for the "My Pace" calculation - the
-    /// first N days starting Monday, set from the context menu's "Workdays in a week".
-    /// Absent means never set, and the widget defaults to 5 (Monday-Friday).
+    /// Which days of the week count as workdays for the "My Pace" calculation, as English
+    /// day names Monday first ("Monday", "Tuesday", ...), set from the context menu's
+    /// "Workdays in a week" - see WorkWeek. Absent, or naming no valid day, means never set:
+    /// <see cref="WorkDaysPerWeek"/> is read instead, and failing that every day counts.
+    /// Read leniently - see <see cref="LenientNamesConverter"/>.
+    /// </summary>
+    [JsonPropertyName("workDays")]
+    [JsonConverter(typeof(LenientNamesConverter))]
+    public string[]? WorkDays { get; set; }
+
+    /// <summary>
+    /// Reads a hand-edited list of names without ever throwing. A value of the wrong shape
+    /// must not fail the whole file: Load and Update answer a deserialize error with a blank
+    /// state, and the next Update writes that blank back - so one mistyped key would wipe
+    /// the pacing opening balances, colours, window position and the workdays themselves.
+    ///
+    /// An array keeps its string entries and skips anything else in it; a single string is
+    /// taken as a comma- or semicolon-separated list ("Monday,Friday"), the likeliest
+    /// mistake; any other value reads as absent. The names themselves are checked by
+    /// WorkWeek.FromNames.
+    /// </summary>
+    private sealed class LenientNamesConverter : JsonConverter<string[]>
+    {
+        public override string[]? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            switch (reader.TokenType)
+            {
+                case JsonTokenType.String:
+                    return (reader.GetString() ?? "").Split(new[] { ',', ';' },
+                        StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+                case JsonTokenType.StartArray:
+                    var names = new List<string>();
+                    while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+                    {
+                        if (reader.TokenType == JsonTokenType.String) names.Add(reader.GetString() ?? "");
+                        else reader.Skip();     // a nested array or object: past its end
+                    }
+                    return names.ToArray();
+
+                default:
+                    reader.Skip();              // an object is skipped whole; a number or bool is already passed
+                    return null;
+            }
+        }
+
+        public override void Write(Utf8JsonWriter writer, string[] value, JsonSerializerOptions options)
+        {
+            writer.WriteStartArray();
+            foreach (var name in value) writer.WriteStringValue(name);
+            writer.WriteEndArray();
+        }
+    }
+
+    /// <summary>
+    /// The setting <see cref="WorkDays"/> replaced: how many days of the week count as
+    /// workdays, as the first N days starting Monday. Read only when WorkDays is absent, and
+    /// cleared the first time a day is ticked or unticked, so a file holds one or the other.
     /// </summary>
     [JsonPropertyName("workDaysPerWeek")]
     public int? WorkDaysPerWeek { get; set; }
@@ -197,6 +253,14 @@ public sealed class AppState
         [JsonPropertyName("dayOpening")] public double DayOpening { get; set; }
         [JsonPropertyName("weekStart")] public string WeekStart { get; set; } = "";
         [JsonPropertyName("weekOpening")] public double WeekOpening { get; set; }
+
+        /// <summary>
+        /// The day <see cref="WeekOpening"/> was taken: the first day the application ran in
+        /// the week, or the day a reset raised the balance. Usage is only known from then
+        /// on, so the week's budget is spread from then on too. Empty in files written
+        /// before it existed, read as <see cref="WeekStart"/>.
+        /// </summary>
+        [JsonPropertyName("weekOpeningDay")] public string WeekOpeningDay { get; set; } = "";
     }
 
     public sealed class IconState

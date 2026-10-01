@@ -164,30 +164,30 @@
           <MenuItem Name="ResetTextItem" Header="Reset to default"/>
         </MenuItem>
         <MenuItem Header="Workdays in a week">
-          <!-- CheckBox rather than Radio: mutual exclusivity is already handled by
-               WorkDaysPerWeek's setter (it flips every other IsWorkDaysN to false), and
-               CheckBox is what draws the same checkmark glyph the rest of the menu uses -
-               Radio would draw a dot instead. -->
-          <MenuItem Header="1" ToggleType="CheckBox"
-                    IsChecked="{Binding IsWorkDays1, Mode=TwoWay}"/>
-          <MenuItem Header="2" ToggleType="CheckBox"
-                    IsChecked="{Binding IsWorkDays2, Mode=TwoWay}"/>
-          <MenuItem Header="3" ToggleType="CheckBox"
-                    IsChecked="{Binding IsWorkDays3, Mode=TwoWay}"/>
-          <MenuItem Header="4" ToggleType="CheckBox"
-                    IsChecked="{Binding IsWorkDays4, Mode=TwoWay}"/>
-          <MenuItem Header="5" ToggleType="CheckBox"
-                    IsChecked="{Binding IsWorkDays5, Mode=TwoWay}"/>
-          <MenuItem Header="6" ToggleType="CheckBox"
-                    IsChecked="{Binding IsWorkDays6, Mode=TwoWay}"/>
-          <MenuItem Header="7" ToggleType="CheckBox"
-                    IsChecked="{Binding IsWorkDays7, Mode=TwoWay}"/>
+          <!-- Each day is its own tick, any combination - no day is assumed to be the
+               weekend. StaysOpenOnClick because a week is usually several ticks: closing
+               after each would mean reopening the menu five times to set Monday-Friday.
+               Unticking the only day left is refused by SetWorkDay, which puts the tick
+               back. -->
+          <MenuItem Header="Monday" ToggleType="CheckBox" StaysOpenOnClick="True"
+                    IsChecked="{Binding IsWorkMonday, Mode=TwoWay}"/>
+          <MenuItem Header="Tuesday" ToggleType="CheckBox" StaysOpenOnClick="True"
+                    IsChecked="{Binding IsWorkTuesday, Mode=TwoWay}"/>
+          <MenuItem Header="Wednesday" ToggleType="CheckBox" StaysOpenOnClick="True"
+                    IsChecked="{Binding IsWorkWednesday, Mode=TwoWay}"/>
+          <MenuItem Header="Thursday" ToggleType="CheckBox" StaysOpenOnClick="True"
+                    IsChecked="{Binding IsWorkThursday, Mode=TwoWay}"/>
+          <MenuItem Header="Friday" ToggleType="CheckBox" StaysOpenOnClick="True"
+                    IsChecked="{Binding IsWorkFriday, Mode=TwoWay}"/>
+          <MenuItem Header="Saturday" ToggleType="CheckBox" StaysOpenOnClick="True"
+                    IsChecked="{Binding IsWorkSaturday, Mode=TwoWay}"/>
+          <MenuItem Header="Sunday" ToggleType="CheckBox" StaysOpenOnClick="True"
+                    IsChecked="{Binding IsWorkSunday, Mode=TwoWay}"/>
         </MenuItem>
         <MenuItem Header="Display of markers">
-          <!-- CheckBox rather than Radio, matching "Workdays in a week" above: mutual
-               exclusivity is already handled by MarkerDisplayMode's setter, and CheckBox is
-               what draws the same checkmark glyph the rest of the menu uses - Radio would
-               draw a dot instead. -->
+          <!-- CheckBox rather than Radio: mutual exclusivity is already handled by
+               MarkerDisplayMode's setter, and CheckBox is what draws the same checkmark
+               glyph the rest of the menu uses - Radio would draw a dot instead. -->
           <MenuItem Header="Current time marker" ToggleType="CheckBox"
                     IsChecked="{Binding IsMarkerDisplayHereAndNow, Mode=TwoWay}"/>
           <MenuItem Header="Daily marker in week" ToggleType="CheckBox"

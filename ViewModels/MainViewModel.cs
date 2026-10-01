@@ -288,6 +288,7 @@ public sealed class BarViewModel : INotifyPropertyChanged
 
     private DateTimeOffset? _markerWindowStart;
     private DateTimeOffset? _markerWindowEnd;
+    private IReadOnlyList<DateTime>? _markerWindowDays;
 
     /// <summary>
     /// Sets this bar's window as one change, the way <see cref="SetMarkers"/> sets its own
@@ -303,10 +304,35 @@ public sealed class BarViewModel : INotifyPropertyChanged
     /// </summary>
     public void SetMarkerWindow(DateTimeOffset? start, DateTimeOffset? end)
     {
-        if (_markerWindowStart == start && _markerWindowEnd == end) return;
+        if (_markerWindowStart == start && _markerWindowEnd == end && _markerWindowDays is null) return;
+        Apply(start, end, null);
+    }
 
+    /// <summary>
+    /// Makes this bar's window whole local days rather than continuous time:
+    /// <see cref="NowMarker"/> then advances through each of <paramref name="days"/> in turn,
+    /// an equal share apiece, and stands still on any day between them. My Pace's bars use
+    /// it for their workdays, so a day off is not counted as time to spend in. An empty list
+    /// means the window holds no work time at all, which reads as all of it gone - the right
+    /// edge. Replaces any clock window, so <see cref="MarkerWindowStart"/>/
+    /// <see cref="MarkerWindowEnd"/> read null: a bar has one kind of window or the other,
+    /// never bounds that look meaningful while the days decide.
+    /// </summary>
+    public void SetMarkerDays(IReadOnlyList<DateTime> days)
+    {
+        // Compared by content: the pacing poll builds a fresh list each time, so a reference
+        // check would announce a change on every poll whether or not the week moved.
+        if (_markerWindowStart is null && _markerWindowEnd is null
+            && _markerWindowDays is not null && days.SequenceEqual(_markerWindowDays))
+            return;
+        Apply(null, null, days);
+    }
+
+    private void Apply(DateTimeOffset? start, DateTimeOffset? end, IReadOnlyList<DateTime>? days)
+    {
         _markerWindowStart = start;
         _markerWindowEnd = end;
+        _markerWindowDays = days;
 
         OnPropertyChanged(nameof(MarkerWindowStart));
         OnPropertyChanged(nameof(MarkerWindowEnd));
@@ -352,25 +378,45 @@ public sealed class BarViewModel : INotifyPropertyChanged
     /// The "here-and-now" marker's position (0-1), or NaN when this display is off or this
     /// bar has no window - see <see cref="UsageBar.NowMarker"/>, which this feeds directly.
     ///
-    /// Recomputed from <see cref="MarkerWindowStart"/>/<see cref="MarkerWindowEnd"/> against
-    /// the clock on every call rather than cached, since nothing else marks it dirty as time
-    /// passes on its own - MainViewModel's once-a-second tick re-announces it instead of
-    /// computing it up front (see RefreshNowMarkers).
+    /// Recomputed from <see cref="MarkerWindowStart"/>/<see cref="MarkerWindowEnd"/> - or the
+    /// window's days, when it was given some - against the clock on every call rather than
+    /// cached, since nothing else marks it dirty as time passes on its own -
+    /// MainViewModel's once-a-second tick re-announces it instead of computing it up front
+    /// (see RefreshNowMarkers).
     /// </summary>
     public double NowMarker
     {
         get
         {
             if (!_hereAndNowMode) return double.NaN;
+            var now = DateTimeOffset.Now;
+            if (_markerWindowDays is { } days)
+            {
+                if (days.Count == 0) return 1;
+                var elapsed = 0.0;
+                foreach (var day in days)
+                    elapsed += Elapsed(new DateTimeOffset(day.Date), new DateTimeOffset(day.Date.AddDays(1)), now);
+                return elapsed / days.Count;
+            }
             if (MarkerWindowStart is not { } start || MarkerWindowEnd is not { } end) return double.NaN;
-
-            var span = (end - start).Ticks;
-            if (span <= 0) return double.NaN;
-
-            var elapsed = (DateTimeOffset.UtcNow - start).Ticks;
-            var fraction = (double)elapsed / span;
-            return fraction < 0 ? 0 : fraction > 1 ? 1 : fraction;
+            return Elapsed(start, end, now);
         }
+    }
+
+    /// <summary>
+    /// How much of the window from <paramref name="start"/> to <paramref name="end"/> has
+    /// passed at <paramref name="now"/>, 0-1; NaN for an empty window. Real time throughout:
+    /// a day's two midnights carry their own UTC offsets, so the 23- and 25-hour days a
+    /// daylight-saving change makes are measured as they are - local wall-clock arithmetic
+    /// ran the 25-hour day backwards through its repeated hour and never reached its end.
+    /// </summary>
+    private static double Elapsed(DateTimeOffset start, DateTimeOffset end, DateTimeOffset now)
+    {
+        var span = (end - start).Ticks;
+        if (span <= 0) return double.NaN;
+
+        var fraction = (double)(now - start).Ticks / span;
+        return fraction < 0 ? 0 : fraction > 1 ? 1 : fraction;
     }
 
     /// <summary>
@@ -1427,69 +1473,76 @@ public sealed class MainViewModel : INotifyPropertyChanged
         AppState.Update(a => a.FontScale = FontScale);
     }
 
-    // ---- workdays per week ----------------------------------------------------------------
+    // ---- workdays ---------------------------------------------------------------------------
 
-    private int _workDaysPerWeek = BusinessDays.DefaultWorkDaysPerWeek;
+    private WorkWeek _workDays = WorkWeek.EveryDay;
 
     /// <summary>
-    /// How many days of the week count as workdays for "My Pace" - the first N days
-    /// starting Monday (see <see cref="BusinessDays"/>), set from the context menu's
-    /// "Workdays in a week". Replaces the previous hardcoded Monday-Friday week.
+    /// Which days of the week count as workdays for "My Pace" (see <see cref="BusinessDays"/>),
+    /// ticked one by one in the context menu's "Workdays in a week". Replaces a count of the
+    /// first N days from Monday, which could neither leave out a day mid-week nor start the
+    /// working week on any day but Monday.
     /// </summary>
-    public int WorkDaysPerWeek
+    public WorkWeek WorkDays
     {
-        get => _workDaysPerWeek;
-        set
+        get => _workDays;
+        private set
         {
-            var clamped = Math.Clamp(value, BusinessDays.MinWorkDaysPerWeek, BusinessDays.MaxWorkDaysPerWeek);
-            if (!Set(ref _workDaysPerWeek, clamped)) return;
-            AppState.Update(a => a.WorkDaysPerWeek = _workDaysPerWeek);
-            for (int n = BusinessDays.MinWorkDaysPerWeek; n <= BusinessDays.MaxWorkDaysPerWeek; n++)
-                OnPropertyChanged(WorkDaysCheckedProperty(n));
+            if (value.IsEmpty || !Set(ref _workDays, value)) return;
+
+            // The count this replaced is cleared as the list is written, so the file never
+            // holds two workday settings that disagree.
+            AppState.Update(a =>
+            {
+                a.WorkDays = value.ToNames();
+                a.WorkDaysPerWeek = null;
+            });
+            foreach (var day in WorkWeek.MondayFirst)
+                OnPropertyChanged(WorkDayProperty(day));
 
             // Recompute immediately from the last known status rather than waiting for the
             // next poll - otherwise the menu selection would appear to do nothing until the
             // next refresh cycle. Claude's rolling week bar is unaffected: its markers are
-            // real calendar-day boundaries, not workday counts - see RollingWeekTodayMarkers.
+            // real calendar-day boundaries, not workdays - see RollingWeekTodayMarkers.
             if (_lastCopilotStatus is { } status) RefreshPacing(status);
         }
     }
 
-    private static string WorkDaysCheckedProperty(int n) => n switch
+    private static string WorkDayProperty(DayOfWeek day) => day switch
     {
-        1 => nameof(IsWorkDays1),
-        2 => nameof(IsWorkDays2),
-        3 => nameof(IsWorkDays3),
-        4 => nameof(IsWorkDays4),
-        5 => nameof(IsWorkDays5),
-        6 => nameof(IsWorkDays6),
-        _ => nameof(IsWorkDays7),
+        DayOfWeek.Monday => nameof(IsWorkMonday),
+        DayOfWeek.Tuesday => nameof(IsWorkTuesday),
+        DayOfWeek.Wednesday => nameof(IsWorkWednesday),
+        DayOfWeek.Thursday => nameof(IsWorkThursday),
+        DayOfWeek.Friday => nameof(IsWorkFriday),
+        DayOfWeek.Saturday => nameof(IsWorkSaturday),
+        _ => nameof(IsWorkSunday),
     };
 
     /// <summary>
-    /// Backs the "Workdays in a week" items 1-7 in the context menu. They are CheckBox
-    /// items, so clicking the one already ticked pushes false rather than being swallowed
-    /// the way a radio group would: <see cref="SelectWorkDays"/> is what puts the tick back.
+    /// Backs the "Workdays in a week" items Monday-Sunday in the context menu, each one an
+    /// independent tick - see <see cref="SetWorkDay"/>.
     /// </summary>
-    public bool IsWorkDays1 { get => _workDaysPerWeek == 1; set => SelectWorkDays(1, value); }
-    public bool IsWorkDays2 { get => _workDaysPerWeek == 2; set => SelectWorkDays(2, value); }
-    public bool IsWorkDays3 { get => _workDaysPerWeek == 3; set => SelectWorkDays(3, value); }
-    public bool IsWorkDays4 { get => _workDaysPerWeek == 4; set => SelectWorkDays(4, value); }
-    public bool IsWorkDays5 { get => _workDaysPerWeek == 5; set => SelectWorkDays(5, value); }
-    public bool IsWorkDays6 { get => _workDaysPerWeek == 6; set => SelectWorkDays(6, value); }
-    public bool IsWorkDays7 { get => _workDaysPerWeek == 7; set => SelectWorkDays(7, value); }
+    public bool IsWorkMonday { get => _workDays.Contains(DayOfWeek.Monday); set => SetWorkDay(DayOfWeek.Monday, value); }
+    public bool IsWorkTuesday { get => _workDays.Contains(DayOfWeek.Tuesday); set => SetWorkDay(DayOfWeek.Tuesday, value); }
+    public bool IsWorkWednesday { get => _workDays.Contains(DayOfWeek.Wednesday); set => SetWorkDay(DayOfWeek.Wednesday, value); }
+    public bool IsWorkThursday { get => _workDays.Contains(DayOfWeek.Thursday); set => SetWorkDay(DayOfWeek.Thursday, value); }
+    public bool IsWorkFriday { get => _workDays.Contains(DayOfWeek.Friday); set => SetWorkDay(DayOfWeek.Friday, value); }
+    public bool IsWorkSaturday { get => _workDays.Contains(DayOfWeek.Saturday); set => SetWorkDay(DayOfWeek.Saturday, value); }
+    public bool IsWorkSunday { get => _workDays.Contains(DayOfWeek.Sunday); set => SetWorkDay(DayOfWeek.Sunday, value); }
 
     /// <summary>
-    /// Applies a click on one of the workday items. Ticking one selects it; unticking the
-    /// one already selected is not a real choice - there is no "no workdays" state - so the
-    /// value is left alone and the property re-announced, which snaps the checkmark the menu
-    /// just cleared back on. Without that echo the binding keeps its own false and the
-    /// submenu sits with nothing ticked while pacing still uses the unchanged value.
+    /// Applies a click on one of the workday items. Unticking the only day left is not a real
+    /// choice - there is no "no workdays" state - so the week is left alone and the item
+    /// re-announced, which snaps the checkmark the menu just cleared back on. Without that
+    /// echo the binding keeps its own false and the submenu shows the day unticked while
+    /// pacing still counts it.
     /// </summary>
-    private void SelectWorkDays(int days, bool isChecked)
+    private void SetWorkDay(DayOfWeek day, bool isWorkday)
     {
-        if (isChecked) WorkDaysPerWeek = days;
-        else OnPropertyChanged(WorkDaysCheckedProperty(days));
+        var week = _workDays.With(day, isWorkday);
+        if (week.IsEmpty) OnPropertyChanged(WorkDayProperty(day));
+        else WorkDays = week;
     }
 
     // ---- marker display --------------------------------------------------------------------
@@ -1539,7 +1592,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// Backs the "Daily view in &quot;Week&quot;" item. CheckBox rather than Radio (see the
     /// menu's own comment), so unchecking the one already selected is not a real choice -
     /// there is always exactly one active display - and just snaps the checkmark back on,
-    /// the same way <see cref="SelectWorkDays"/> does for "Workdays in a week".
+    /// the same way <see cref="SetWorkDay"/> does for the last day left in "Workdays in a week".
     /// </summary>
     public bool IsMarkerDisplayDaily
     {
@@ -1857,7 +1910,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private void RefreshPacing(CopilotStatus status)
     {
         _lastCopilotStatus = status;
-        var pacing = _pacing.Build(status, DateTime.Now, _workDaysPerWeek);
+        var pacing = _pacing.Build(status, DateTime.Now, _workDays);
         if (pacing is null)
         {
             // Clear the bars as well as hiding the panel. They are reused, so a day that
@@ -1877,48 +1930,60 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _pacingDaysLeft = pacing.BusinessDaysLeft;
         UpdatePacingSubtitle();
 
-        var now = DateTime.Now;
-        var todayStart = now.Date;
-
-        PacingBars[0].SetMarkerWindow(
-            new DateTimeOffset(todayStart), new DateTimeOffset(todayStart.AddDays(1)));
-        Set(PacingBars[0], pacing.DayFraction, pacing.DayPercent,
-            pacing.UsedToday, pacing.PerDayAllowance, pacing.Unit);
+        // Every pacing bar's here-and-now window is its workdays (see SetMarkerDays): the
+        // marker advances through each one and stands still on a day off, so changing the
+        // workdays moves it and a day off is never counted as time to spend in.
+        //
+        // A day off has no allowance (see CopilotPacing.IsWorkdayToday) and no work time
+        // either, so its empty list puts the marker at the right edge from the day's first
+        // minute: there is nothing more to use today.
+        var today = DateTime.Now.Date;
+        PacingBars[0].SetMarkerDays(pacing.IsWorkdayToday ? new[] { today } : Array.Empty<DateTime>());
+        Set(PacingBars[0], pacing.UsedToday, pacing.PerDayAllowance, pacing.Unit);
 
         // Markers before Set, which assigns Fraction - the same ordering the Claude week bar's
         // poll uses, and for the same reason: the pace colours are derived from the fraction
         // and the today marker together (see BarViewModel.IsAheadOfPace).
         PacingBars[1].SetMarkers(
             WeekMarkers(pacing.WorkdaysInWeek), pacing.WorkdayIndexInWeek - 1);
-        // The week bar's budget spans Monday through its last workday (see WorkdaysInWeek),
-        // so the here-and-now window matches that span rather than the calendar week -
-        // Saturday/Sunday would otherwise sit past the bar's own right edge.
+
+        // The week's workdays are an equal share apiece, as the daily ticks above are spaced.
+        // They start on the day the week's opening balance was taken - Monday, a reset later
+        // in the week, or the first day the application ran - since usage is measured from
+        // then and the budget is spread from then.
         //
-        // Except once that span is already behind us. On a 5-day work week the workday span
-        // ends at Saturday 00:00, so all weekend the clock sits past the window's end: the
-        // marker pinned to the right edge and IsAheadOfPace could never fire, whatever was
-        // actually spent. Running the window out to the end of the calendar week instead
-        // keeps the marker moving through those days - the budget is still the workdays', so
-        // a weekend marker past the last workday tick is exactly the right reading: every
-        // workday is gone and nothing is left to pace against.
-        var weekStart = BusinessDays.StartOfWeek(now);
-        var weekEnd = weekStart.AddDays(pacing.WorkdaysInWeek);
-        if (weekEnd <= now) weekEnd = weekStart.AddDays(7);
-        PacingBars[1].SetMarkerWindow(new DateTimeOffset(weekStart), new DateTimeOffset(weekEnd));
-        Set(PacingBars[1], pacing.WeekFraction, pacing.WeekPercent,
-            pacing.UsedThisWeek, pacing.WeekBudget, pacing.Unit);
+        // Once the week's last workday is behind us the marker rests at the right edge -
+        // every workday is gone and nothing is left to pace against - and spending past the
+        // week's budget still shows, as the bar passing 100%. A week with no workday in it at
+        // all reads the same way, as a day off does. A plain clock window used to be run on
+        // to the end of the calendar week from there, to keep the marker moving through the
+        // weekend; it is gone because it ignored which days are workdays, so changing them
+        // did nothing to it.
+        PacingBars[1].SetMarkerDays(pacing.WeekWorkdays);
+        Set(PacingBars[1], pacing.UsedThisWeek, pacing.WeekBudget, pacing.Unit);
 
-        var (monthStart, monthEnd) = CalendarMonthWindow(now, status.ResetDate);
-        PacingBars[2].SetMarkerWindow(monthStart, monthEnd);
-        Set(PacingBars[2], pacing.MonthFraction, pacing.MonthPercent,
-            pacing.UsedThisPeriod, pacing.Entitlement, pacing.Unit);
+        // The month is paced over its workdays too (see PeriodWorkdays) - the same days the
+        // daily allowance divides the balance by. On calendar time the marker ran ahead of
+        // the allowance on every workday and behind it on every day off, and changing the
+        // workdays could not move it at all.
+        PacingBars[2].SetMarkerDays(pacing.PeriodWorkdays);
+        Set(PacingBars[2], pacing.UsedThisPeriod, pacing.Entitlement, pacing.Unit);
 
-        static void Set(BarViewModel bar, double fraction, double percent, double used, double budget, string unit)
+        static void Set(BarViewModel bar, double used, double budget, string unit)
         {
+            // A budget of nothing - a day off, or a week with no workday in it - has no share
+            // to give: nothing spent is 0%, and anything spent is past 100% by any amount,
+            // with no figure for how much. "Anything" is judged on the figure the caption
+            // prints, as IsSpent judges its percentage, so a fraction of a credit that rounds
+            // to 0 does not redden a caption saying 0.
+            var percent = budget > 0 ? used / budget * 100
+                : Printed(used) >= 1 ? double.PositiveInfinity
+                : 0;
+
             // Spending past the allowance is meaningful, so the number keeps climbing even
             // though the bar itself stops at full.
-            bar.Fraction = Math.Clamp(fraction, 0, 1);
-            bar.ValueText = $"{percent:0}%";
+            bar.Fraction = Math.Clamp(percent / 100, 0, 1);
+            bar.ValueText = double.IsPositiveInfinity(percent) ? ">100%" : $"{percent:0}%";
 
             // At or past the allowance the caption turns red and carries a warning sign.
             // The bar cannot show this on its own: it saturates at full, so 100% and 377%
@@ -1931,9 +1996,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
     }
 
     /// <summary>
-    /// One marker per workday boundary in the week, Monday through the day before the
-    /// week's last workday - the days still ahead included, not only those elapsed so far,
-    /// so the whole week's shape is visible against the fill. The very last boundary is
+    /// One marker per boundary between the week's workdays (see
+    /// <see cref="CopilotPacing.WeekWorkdays"/>), each workday an equal share of the bar
+    /// whatever days off fall between them - the days still ahead included, not only those
+    /// elapsed so far, so the whole week's shape is visible against the fill. The very last boundary is
     /// skipped: it always sits exactly at the bar's own right edge, which already marks it,
     /// so a tick there (red on the last workday included - see
     /// <see cref="BarViewModel.TodayMarkerIndex"/>, set by the caller) would be redundant.
@@ -1950,29 +2016,20 @@ public sealed class MainViewModel : INotifyPropertyChanged
     }
 
     /// <summary>
-    /// The calendar-month window GitHub Copilot's own quota buckets (and My Pace's Month
-    /// bar, which shares the same period) reset on - see CLAUDE.md's note that this bucket
-    /// is a real calendar month. Ends at <paramref name="resetAt"/> when GitHub reports one,
-    /// since the reset is what actually starts the next period; otherwise falls back to the
-    /// calendar month containing <paramref name="now"/>, for the moment right after sign-in
-    /// when a poll has not yet reported one.
+    /// The window GitHub Copilot's own quota bars reset on - see CLAUDE.md's note that this
+    /// bucket is a real calendar month - from 00:00 on the period's first day to 00:00 on the
+    /// reset day. The period comes from BusinessDays.QuotaPeriod, the same one My Pace paces
+    /// over, so a missing reset (the moment right after sign-in, before a poll has reported
+    /// one) and a stale one (a period that has since rolled over, or the application asleep
+    /// across one) are handled exactly as they are there. A stale reset used to be left as
+    /// the window's end, which sat the clock past it and pinned the marker to the right edge
+    /// for as long as the stale date stood.
     /// </summary>
     private static (DateTimeOffset Start, DateTimeOffset End) CalendarMonthWindow(
         DateTime now, DateTimeOffset? resetAt)
     {
-        var fallback = new DateTime(now.Year, now.Month, DateTime.DaysInMonth(now.Year, now.Month)).AddDays(1);
-        var end = resetAt?.ToLocalTime().Date ?? fallback;
-
-        // A reset already in the past is a stale figure - GitHub's last poll reported a
-        // period that has since rolled over, or the app has been asleep across one. Falling
-        // back to the calendar month containing now is the same "a reset already elapsed
-        // cannot bound the window we are in" correction BusinessDays.RemainingInPeriod
-        // makes; without it the clock sat past the window's end and pinned the Month
-        // marker to the right edge for as long as the stale date stood.
-        if (end <= now.Date) end = fallback;
-
-        var start = end.AddMonths(-1);
-        return (new DateTimeOffset(start), new DateTimeOffset(end));
+        var (start, last) = BusinessDays.QuotaPeriod(now, resetAt);
+        return (new DateTimeOffset(start), new DateTimeOffset(last.AddDays(1)));
     }
 
 
@@ -2329,7 +2386,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// raw value would leave that reading sitting in white while claiming to be full,
     /// which is the one case the colour exists to explain.
     /// </summary>
-    private static bool IsSpent(double percent) => Math.Round(percent, MidpointRounding.AwayFromZero) >= 100;
+    private static bool IsSpent(double percent) => Printed(percent) >= 100;
+
+    /// <summary>
+    /// A figure as the "0" format every caption uses prints it - rounded half away from
+    /// zero. The one place that rule lives, so a colour judged "on the figure actually
+    /// printed" cannot drift from the format that prints it.
+    /// </summary>
+    private static double Printed(double value) => Math.Round(value, MidpointRounding.AwayFromZero);
 
     /// <summary>The caption's warning prefix, kept apart so the format string is written once.</summary>
     private static string Warning(bool over) => over ? "⚠ " : "";
@@ -2984,12 +3048,15 @@ public sealed class MainViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(CanIncreaseFontScale));
         OnPropertyChanged(nameof(CanDecreaseFontScale));
 
-        // Absent means never set: stay at the as-designed 5-day (Monday-Friday) week.
-        _workDaysPerWeek = Math.Clamp(state.WorkDaysPerWeek ?? BusinessDays.DefaultWorkDaysPerWeek,
-            BusinessDays.MinWorkDaysPerWeek, BusinessDays.MaxWorkDaysPerWeek);
-        OnPropertyChanged(nameof(WorkDaysPerWeek));
-        for (int n = BusinessDays.MinWorkDaysPerWeek; n <= BusinessDays.MaxWorkDaysPerWeek; n++)
-            OnPropertyChanged(WorkDaysCheckedProperty(n));
+        // The day list when there is one; otherwise the count it replaced, read as the first
+        // N days from Monday so a 5 set before the change stays Monday-Friday; otherwise
+        // never set, and every day counts. Only read here, not rewritten: the list is
+        // written the first time a day is actually ticked or unticked.
+        _workDays = WorkWeek.FromNames(state.WorkDays)
+            ?? (state.WorkDaysPerWeek is { } count ? WorkWeek.FirstDaysFromMonday(count) : WorkWeek.EveryDay);
+        OnPropertyChanged(nameof(WorkDays));
+        foreach (var day in WorkWeek.MondayFirst)
+            OnPropertyChanged(WorkDayProperty(day));
 
         // Absent, unrecognised, or invalid means never set: stay on "Daily view in Week".
         _markerDisplayMode = Enum.TryParse<MarkerDisplayMode>(state.MarkerDisplayMode, out var mode)

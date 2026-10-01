@@ -76,7 +76,7 @@ over 100% and the number keeps counting, so you can see by how much.
 ## Everyday use
 
 - **Weekly limit** - you should see the weekly limit as "_how much can I do within this week_", so
-  if you have a workplace account, then you could setup a week to have 5 days, at you are then entitled to use the entire weekly limit within those 5 days.
+  if you have a workplace account, then you could tick the days you work under "Workdays in a week" - for example Monday to Friday - and you are then entitled to use the entire weekly limit within those days. Any combination of days works, so a Tuesday-Saturday or a Monday/Wednesday/Friday week is just as possible.
 - **Move visible window** - drag the top bar anywhere on screen; it reopens there next time.
 - **Refresh now** - click the small circular arrow, top right, to instant-update usage.
 - **Pin on top** - the pin icon toggles whether the application stays above other windows.

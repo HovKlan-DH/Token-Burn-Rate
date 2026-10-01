@@ -234,23 +234,35 @@ public sealed class CopilotPacing
     /// <summary>The unit of the bucket this pacing was built from - see <see cref="CopilotQuota.Unit"/>.</summary>
     public required string Unit { get; init; }
 
+    /// <summary>Whether today is one of the chosen workdays. A day off has no allowance.</summary>
+    public bool IsWorkdayToday { get; init; }
+
+    /// <summary>Today's allowance: 0 on a day off - see <see cref="IsWorkdayToday"/>.</summary>
     public double PerDayAllowance { get; init; }
     public double UsedToday { get; init; }
     public double UsedThisWeek { get; init; }
     public double WeekBudget { get; init; }
     public double UsedThisPeriod { get; init; }
 
-    /// <summary>Today's 1-based workday index within the week (Monday = 1).</summary>
+    /// <summary>
+    /// The dates of the workdays the week bar's budget spans - from the day the week's
+    /// opening balance was taken through the end of the week or the period, elapsed ones
+    /// included. Not necessarily consecutive: a day off mid-week is simply absent.
+    /// </summary>
+    public IReadOnlyList<DateTime> WeekWorkdays { get; init; } = Array.Empty<DateTime>();
+
+    /// <summary>
+    /// How many of <see cref="WeekWorkdays"/> fall on or before today - today's 1-based
+    /// workday index on a workday, the last one before it on a day off, 0 before the first.
+    /// </summary>
     public int WorkdayIndexInWeek { get; init; }
 
-    /// <summary>Total workdays the week bar's budget spans, from Monday through its last workday.</summary>
-    public int WorkdaysInWeek { get; init; }
+    /// <summary>Total workdays the week bar's budget spans.</summary>
+    public int WorkdaysInWeek => WeekWorkdays.Count;
 
-    public double DayFraction => PerDayAllowance > 0 ? UsedToday / PerDayAllowance : 0;
-    public double WeekFraction => WeekBudget > 0 ? UsedThisWeek / WeekBudget : 0;
-    public double MonthFraction => Entitlement > 0 ? UsedThisPeriod / Entitlement : 0;
-
-    public double DayPercent => DayFraction * 100;
-    public double WeekPercent => WeekFraction * 100;
-    public double MonthPercent => MonthFraction * 100;
+    /// <summary>
+    /// The dates of every workday in the quota period, elapsed ones included - the days the
+    /// month's entitlement is paced over, and so the month bar's marker window.
+    /// </summary>
+    public IReadOnlyList<DateTime> PeriodWorkdays { get; init; } = Array.Empty<DateTime>();
 }
