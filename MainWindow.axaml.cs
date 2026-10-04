@@ -207,6 +207,11 @@ public partial class MainWindow : Window
         SetUpTray();
         _vm.LoadCollapsedState();
 
+        // The ring's colour follows a bar's pace verdict, which a "Display of markers" tick or
+        // the clock marker can change between polls - see PaceVerdictChanged. A method group
+        // rather than a lambda, so OnClosing can unsubscribe the same delegate it added.
+        _vm.PaceVerdictChanged += OnPaceVerdictChanged;
+
         // Changing an update setting runs a check soon after rather than at the next
         // recheck: the last check answered for the old settings. Hooked after
         // LoadCollapsedState so restoring the saved values is not taken for a change - and
@@ -767,6 +772,8 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnPaceVerdictChanged(object? sender, EventArgs e) => UpdateTrayIcon();
+
     /// <summary>
     /// Repaints the tray icon as a "quota ring" for whichever bar ResolveIconState picks.
     /// See Assets/live-ring-icon.md. Called after every refresh path, so the ring can never
@@ -1122,6 +1129,8 @@ public partial class MainWindow : Window
             _vm.PropertyChanged -= updateSettings;
             _updateSettingsHandler = null;
         }
+
+        _vm.PaceVerdictChanged -= OnPaceVerdictChanged;
 
         base.OnClosing(e);
 

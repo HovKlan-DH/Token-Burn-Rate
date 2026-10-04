@@ -191,13 +191,19 @@ public sealed class AppState
     public int? WorkDaysPerWeek { get; set; }
 
     /// <summary>
-    /// Which of the three marker displays the bars use, set from the context menu's
-    /// "Display of markers" - the name of a TokenBurnRate.ViewModels.MarkerDisplayMode
-    /// value ("Daily", "HereAndNow", "None"). Absent, unrecognised, or invalid falls back to
-    /// "Daily" - the original fixed calendar-boundary ticks.
+    /// Whether the bars draw their day ticks - the context menu's "Display of markers" item
+    /// "Daily marker in week". Independent of <see cref="ShowCurrentTimeMarker"/>: either,
+    /// both or neither. Absent means never set: off.
     /// </summary>
-    [JsonPropertyName("markerDisplayMode")]
-    public string? MarkerDisplayMode { get; set; }
+    [JsonPropertyName("showDailyMarkers")]
+    public bool? ShowDailyMarkers { get; set; }
+
+    /// <summary>
+    /// Whether the bars draw the marker tracking the clock - "Display of markers" item
+    /// "Current time marker". Absent means never set: on.
+    /// </summary>
+    [JsonPropertyName("showCurrentTimeMarker")]
+    public bool? ShowCurrentTimeMarker { get; set; }
 
     /// <summary>
     /// Seconds between refreshes. Nothing in the UI offers this: it exists for the rare

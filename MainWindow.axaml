@@ -60,7 +60,7 @@
                        Markers="{Binding Markers}"
                        TodayMarkerIndex="{Binding TodayMarkerIndex}"
                        NowMarker="{Binding NowMarker}"
-                       ShowMarkers="{Binding ShowMarkers}"
+                       ShowDailyMarkers="{Binding ShowDailyMarkers}"
                        MarkerAccentBrush="#F85149"/>
         <TextBlock Grid.Column="2" Text="{Binding ValueText}" Classes="barvalue"
                    VerticalAlignment="Bottom" Margin="8,0,0,-1"
@@ -185,15 +185,13 @@
                     IsChecked="{Binding IsWorkSunday, Mode=TwoWay}"/>
         </MenuItem>
         <MenuItem Header="Display of markers">
-          <!-- CheckBox rather than Radio: mutual exclusivity is already handled by
-               MarkerDisplayMode's setter, and CheckBox is what draws the same checkmark
-               glyph the rest of the menu uses - Radio would draw a dot instead. -->
-          <MenuItem Header="Current time marker" ToggleType="CheckBox"
-                    IsChecked="{Binding IsMarkerDisplayHereAndNow, Mode=TwoWay}"/>
-          <MenuItem Header="Daily marker in week" ToggleType="CheckBox"
-                    IsChecked="{Binding IsMarkerDisplayDaily, Mode=TwoWay}"/>
-          <MenuItem Header="Show no markers" ToggleType="CheckBox"
-                    IsChecked="{Binding IsMarkerDisplayNone, Mode=TwoWay}"/>
+          <!-- Two independent ticks, any combination, as in "Workdays in a week": neither
+               leaves the bars plain, both draws the day ticks muted under the clock's
+               marker. StaysOpenOnClick for the same reason as there. -->
+          <MenuItem Header="Current time marker" ToggleType="CheckBox" StaysOpenOnClick="True"
+                    IsChecked="{Binding ShowCurrentTimeMarker, Mode=TwoWay}"/>
+          <MenuItem Header="Daily marker in week" ToggleType="CheckBox" StaysOpenOnClick="True"
+                    IsChecked="{Binding ShowDailyMarkers, Mode=TwoWay}"/>
         </MenuItem>
         <Separator/>
         <MenuItem Header="Advanced">

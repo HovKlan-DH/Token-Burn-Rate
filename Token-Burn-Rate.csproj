@@ -9,12 +9,12 @@
 	<Copyright>©2026 Dennis Helligsø</Copyright>
 
 	<AssemblyVersion>1.4.0</AssemblyVersion>
+	<!--
 	<InformationalVersion>1.4.0-beta.1</InformationalVersion>
-	  <!--
+	-->
 	<InformationalVersion>$(AssemblyVersion)</InformationalVersion>
-		-->
 
-	<!-- Must stay below the two properties they read: MSBuild evaluates a PropertyGroup
+	  <!-- Must stay below the two properties they read: MSBuild evaluates a PropertyGroup
 	     top-to-bottom, so placing these first silently resolved FileVersion to empty and
 	     Version to a bare 1.0.0 (the SDK's fallback), dropping the pre-release suffix. -->
 	<FileVersion>$(AssemblyVersion)</FileVersion>

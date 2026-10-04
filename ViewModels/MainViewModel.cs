@@ -12,24 +12,6 @@ using TokenBurnRate.Services;
 
 namespace TokenBurnRate.ViewModels;
 
-/// <summary>
-/// The three ways the pacing bars can show time passing within their window, set from the
-/// context menu's "Display of markers" - see <see cref="MainViewModel.MarkerDisplayMode"/>.
-/// Persisted by name (AppState.MarkerDisplayMode) rather than as a bare bool now that there
-/// are three states, not two.
-/// </summary>
-public enum MarkerDisplayMode
-{
-    /// <summary>"Daily view in Week" - the original fixed calendar-boundary ticks.</summary>
-    Daily,
-
-    /// <summary>"Here-and-now time in all" - one red marker per bar tracking the clock.</summary>
-    HereAndNow,
-
-    /// <summary>"Show no markers" - the bar draws neither ticks nor a marker.</summary>
-    None,
-}
-
 public sealed class BarViewModel : INotifyPropertyChanged
 {
     private string _label = "";
@@ -219,46 +201,52 @@ public sealed class BarViewModel : INotifyPropertyChanged
     /// allowance this far into the window is already spent, even though the window itself
     /// has room left.
     ///
-    /// In "Here-and-now time in all" (<see cref="HereAndNowMode"/>) the marker is
-    /// <see cref="NowMarker"/> itself - the clock's own position in the window - so every
-    /// bar with a window can be ahead of pace, not only the two that carry discrete ticks.
-    /// Otherwise it is the "today" tick from <see cref="Markers"/>/
-    /// <see cref="TodayMarkerIndex"/>, the boundary the day in progress runs out at. Bars
-    /// with neither - every bar outside the two week views when ticks are what is showing,
-    /// or any bar with no window at all in here-and-now mode - have no pace to be ahead of
-    /// and report false.
+    /// Judged only against a marker the bar actually draws, so a row never reddens with
+    /// nothing on its track to say why. With "Current time marker" ticked
+    /// (<see cref="ShowCurrentTimeMarker"/>) the marker is <see cref="NowMarker"/> itself -
+    /// the clock's own position in the window - so every bar with a window can be ahead of
+    /// pace, not only the two that carry discrete ticks. With only "Daily marker in week"
+    /// ticked (<see cref="ShowDailyMarkers"/>) it is the "today" tick from
+    /// <see cref="Markers"/>/<see cref="TodayMarkerIndex"/>, the boundary the day in progress
+    /// runs out at. Everything else - neither ticked, a bar outside the two week views with
+    /// only the day ticks, or a bar with no window at all - has no pace to be ahead of and
+    /// reports false.
     /// </summary>
-    public bool IsAheadOfPace
+    public bool IsAheadOfPace => AheadOf(PaceMarker());
+
+    /// <summary>
+    /// The marker <see cref="IsAheadOfPace"/> is judged against, or NaN for none - see there.
+    /// </summary>
+    private double PaceMarker()
     {
-        get
-        {
-            double marker;
-            if (_hereAndNowMode)
-            {
-                marker = NowMarker;
-                if (double.IsNaN(marker)) return false;
-            }
-            else
-            {
-                var markers = _markers;
-                if (markers is null) return false;
-                if (_todayMarkerIndex < 0 || _todayMarkerIndex >= markers.Count) return false;
+        if (_showCurrentTimeMarker) return NowMarker;
+        if (!_showDailyMarkers) return double.NaN;
 
-                marker = markers[_todayMarkerIndex];
-                if (double.IsNaN(marker) || double.IsInfinity(marker)) return false;
-            }
-
-            // Must match UsageBar.DrawMarkers'/DrawSingleMarker's own clamp of the same
-            // fraction: that one decides where the tick or marker is drawn, this one decides
-            // what the fill is compared against, and they have to be the same number. Out of
-            // range they would disagree - the mark pinned to the bar's edge while this tested
-            // the raw value - reddening a row whose fill visibly falls short of the mark.
-            // Change one, change the other.
-            marker = Math.Clamp(marker, 0, 1);
-
-            return _fraction > marker;
-        }
+        var markers = _markers;
+        if (markers is null || _todayMarkerIndex < 0 || _todayMarkerIndex >= markers.Count)
+            return double.NaN;
+        return markers[_todayMarkerIndex];
     }
+
+    private bool AheadOf(double marker)
+    {
+        if (double.IsNaN(marker) || double.IsInfinity(marker)) return false;
+
+        // Must match UsageBar.DrawTicks'/DrawSingleMarker's own clamp of the same fraction:
+        // that one decides where the tick or marker is drawn, this one decides what the fill
+        // is compared against, and they have to be the same number. Out of range they would
+        // disagree - the mark pinned to the bar's edge while this tested the raw value -
+        // reddening a row whose fill visibly falls short of the mark. Change one, change the
+        // other.
+        return _fraction > Math.Clamp(marker, 0, 1);
+    }
+
+    /// <summary>
+    /// <see cref="IsAheadOfPace"/> as it stood when last announced - the verdict the bindings
+    /// currently show. <see cref="TickNowMarker"/> compares against it to tell whether the
+    /// clock's own advance has flipped it since.
+    /// </summary>
+    private bool _shownAheadOfPace;
 
     /// <summary>
     /// Raised whenever an input to <see cref="IsAheadOfPace"/> changes - the pace half of the
@@ -266,6 +254,7 @@ public sealed class BarViewModel : INotifyPropertyChanged
     /// </summary>
     private void PaceChanged()
     {
+        _shownAheadOfPace = IsAheadOfPace;
         OnPropertyChanged(nameof(IsAheadOfPace));
         WarningColoursChanged();
     }
@@ -280,7 +269,7 @@ public sealed class BarViewModel : INotifyPropertyChanged
 
     /// <summary>
     /// The start of this bar's own window, paired with <see cref="MarkerWindowEnd"/> so the
-    /// "Here-and-now time in all" display can place <see cref="NowMarker"/> at the clock's
+    /// "Current time marker" display can place <see cref="NowMarker"/> at the clock's
     /// own position between them. Set alongside MarkerWindowEnd wherever a bar's window is
     /// known; null on any bar with no window to speak of.
     /// </summary>
@@ -299,8 +288,8 @@ public sealed class BarViewModel : INotifyPropertyChanged
     /// Announcing at all is the point. These were plain auto-properties, and a poll that
     /// moved the window without moving the fill - the common case, since every window slides
     /// forward on every reset - left the marker drawn at its old position until the
-    /// once-a-second tick happened to catch it, and never at all outside here-and-now mode,
-    /// where that tick is a no-op (see <see cref="TickNowMarker"/>).
+    /// once-a-second tick happened to catch it, and never at all while the current time
+    /// marker was unticked, where that tick is a no-op (see <see cref="TickNowMarker"/>).
     /// </summary>
     public void SetMarkerWindow(DateTimeOffset? start, DateTimeOffset? end)
     {
@@ -336,59 +325,64 @@ public sealed class BarViewModel : INotifyPropertyChanged
 
         OnPropertyChanged(nameof(MarkerWindowStart));
         OnPropertyChanged(nameof(MarkerWindowEnd));
-        OnPropertyChanged(nameof(NowMarker));
+        NowMarkerChanged();
         PaceChanged();
     }
 
-    private bool _hereAndNowMode;
+    private bool _showCurrentTimeMarker;
 
     /// <summary>
-    /// Whether the "Here-and-now time in all" display is active, set on every bar together
-    /// by MainViewModel whenever the context menu's "Display of markers" choice changes.
-    /// Lives on the bar rather than being read from the view model that owns it because
+    /// Whether "Current time marker" is ticked, set on every bar together by MainViewModel
+    /// whenever it is ticked or unticked in the context menu's "Display of markers". Lives on
+    /// the bar rather than being read from the view model that owns it because
     /// <see cref="NowMarker"/> needs to react to it without a back-reference.
     /// </summary>
-    public bool HereAndNowMode
+    public bool ShowCurrentTimeMarker
     {
-        get => _hereAndNowMode;
+        get => _showCurrentTimeMarker;
         set
         {
-            if (!Set(ref _hereAndNowMode, value)) return;
-            OnPropertyChanged(nameof(NowMarker));
+            if (!Set(ref _showCurrentTimeMarker, value)) return;
+            NowMarkerChanged();
             PaceChanged();
         }
     }
 
-    private bool _showMarkers = true;
+    private bool _showDailyMarkers;
 
     /// <summary>
-    /// Whether this bar draws any marker at all - the "Show no markers" display, set on
-    /// every bar together by MainViewModel the same way <see cref="HereAndNowMode"/> is. The
-    /// pace colours (see <see cref="IsAheadOfPace"/>) still read Markers/TodayMarkerIndex
-    /// regardless, so this only feeds <see cref="UsageBar.ShowMarkers"/> and never touches
-    /// what is actually stored.
+    /// Whether this bar draws its day ticks - "Daily marker in week" in the context menu's
+    /// "Display of markers", set on every bar together by MainViewModel the same way
+    /// <see cref="ShowCurrentTimeMarker"/> is. Markers/TodayMarkerIndex stay set either way,
+    /// so ticking it again draws them at once rather than at the next poll - but unticked,
+    /// the pace colours no longer read them (see <see cref="IsAheadOfPace"/>).
     /// </summary>
-    public bool ShowMarkers
+    public bool ShowDailyMarkers
     {
-        get => _showMarkers;
-        set => Set(ref _showMarkers, value);
+        get => _showDailyMarkers;
+        set
+        {
+            if (!Set(ref _showDailyMarkers, value)) return;
+            PaceChanged();
+        }
     }
 
     /// <summary>
-    /// The "here-and-now" marker's position (0-1), or NaN when this display is off or this
-    /// bar has no window - see <see cref="UsageBar.NowMarker"/>, which this feeds directly.
+    /// The "here-and-now" marker's position (0-1), or NaN when it is unticked or this bar
+    /// has no window - see <see cref="UsageBar.NowMarker"/>, which this feeds directly.
     ///
     /// Recomputed from <see cref="MarkerWindowStart"/>/<see cref="MarkerWindowEnd"/> - or the
     /// window's days, when it was given some - against the clock on every call rather than
     /// cached, since nothing else marks it dirty as time passes on its own -
     /// MainViewModel's once-a-second tick re-announces it instead of computing it up front
-    /// (see RefreshNowMarkers).
+    /// (see RefreshNowMarkers). Not cached for the tray's sake as well: that tick stops while
+    /// the window is hidden, and the ring still reads the pace verdict after every poll.
     /// </summary>
     public double NowMarker
     {
         get
         {
-            if (!_hereAndNowMode) return double.NaN;
+            if (!_showCurrentTimeMarker) return double.NaN;
             var now = DateTimeOffset.Now;
             if (_markerWindowDays is { } days)
             {
@@ -420,15 +414,53 @@ public sealed class BarViewModel : INotifyPropertyChanged
     }
 
     /// <summary>
+    /// <see cref="NowMarker"/> as it stood when last announced - the position the bar is
+    /// currently drawn with. NaN when none is drawn.
+    /// </summary>
+    private double _shownNowMarker = double.NaN;
+
+    /// <summary>
+    /// How far <see cref="NowMarker"/> has to move before <see cref="TickNowMarker"/>
+    /// announces it: finer than a pixel on any bar this window draws, the widest being under
+    /// 700 wide even at the largest text scale. A five-hour window crosses it about every
+    /// 18 seconds and a seven-day one about every ten minutes, rather than every second.
+    /// </summary>
+    private const double NowMarkerStep = 1.0 / 1024;
+
+    private void NowMarkerChanged()
+    {
+        _shownNowMarker = NowMarker;
+        OnPropertyChanged(nameof(NowMarker));
+    }
+
+    /// <summary>
     /// Re-announces <see cref="NowMarker"/> so the bar repaints, and re-evaluates
     /// <see cref="IsAheadOfPace"/> since the fill can cross it with no poll in between - see
-    /// MainViewModel.RefreshNowMarkers.
+    /// MainViewModel.RefreshNowMarkers. Only once either has visibly changed, though: run
+    /// every second on every bar, announcing unconditionally recomputed the marker several
+    /// times a bar and repainted all of them for a move far smaller than a pixel.
+    ///
+    /// Returns whether the pace verdict flipped, which the tray ring has to be told about -
+    /// it is otherwise repainted only after a poll.
     /// </summary>
-    public void TickNowMarker()
+    public bool TickNowMarker()
     {
-        if (!_hereAndNowMode) return;
-        OnPropertyChanged(nameof(NowMarker));
+        if (!_showCurrentTimeMarker) return false;
+
+        // The clock marker is what the pace is judged against whenever it is ticked (see
+        // PaceMarker), so the verdict falls out of the one value computed here.
+        var marker = NowMarker;
+        var ahead = AheadOf(marker);
+
+        // NaN on both sides is a bar with no window that still has none - nothing moved.
+        var moved = double.IsNaN(marker) != double.IsNaN(_shownNowMarker)
+            || Math.Abs(marker - _shownNowMarker) >= NowMarkerStep;
+        var flipped = ahead != _shownAheadOfPace;
+        if (!moved && !flipped) return false;
+
+        NowMarkerChanged();
         PaceChanged();
+        return flipped;
     }
 
     /// <summary>
@@ -654,8 +686,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
         => new()
         {
             Label = label, ValueText = "—", Accent = ClaudeAccentColor, WarnCaption = false,
-            HereAndNowMode = _markerDisplayMode == MarkerDisplayMode.HereAndNow,
-            ShowMarkers = _markerDisplayMode != MarkerDisplayMode.None,
+            ShowCurrentTimeMarker = _showCurrentTimeMarker,
+            ShowDailyMarkers = _showDailyMarkers,
         };
 
     public ObservableCollection<BarViewModel> ClaudeBars { get; } = new();
@@ -1547,84 +1579,79 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     // ---- marker display --------------------------------------------------------------------
 
-    private MarkerDisplayMode _markerDisplayMode = MarkerDisplayMode.Daily;
+    private bool _showCurrentTimeMarker = true;
+    private bool _showDailyMarkers;
 
     /// <summary>
-    /// Which of the three marker displays every bar uses, set from the context menu's
-    /// "Display of markers". Daily (the default) is "Daily view in Week" - the original
-    /// fixed calendar-boundary ticks; HereAndNow is "Here-and-now time in all" - a single
-    /// red marker per bar tracking the clock's own position in its window instead; None is
-    /// "Show no markers" - the bar with nothing drawn on it at all.
+    /// Backs "Current time marker" in the context menu's "Display of markers": a single red
+    /// marker per bar tracking the clock's own position in its window. An independent tick,
+    /// as each day in "Workdays in a week" is - see <see cref="ShowDailyMarkers"/> for what
+    /// the two draw together, and with neither ticked the bars draw nothing at all. On until
+    /// first unticked.
     /// </summary>
-    public MarkerDisplayMode MarkerDisplayMode
+    public bool ShowCurrentTimeMarker
     {
-        get => _markerDisplayMode;
+        get => _showCurrentTimeMarker;
         set
         {
-            if (!Set(ref _markerDisplayMode, value)) return;
-            AppState.Update(a => a.MarkerDisplayMode = _markerDisplayMode.ToString());
-            OnPropertyChanged(nameof(IsMarkerDisplayDaily));
-            OnPropertyChanged(nameof(IsMarkerDisplayHereAndNow));
-            OnPropertyChanged(nameof(IsMarkerDisplayNone));
-
-            ApplyMarkerDisplayMode();
+            if (!Set(ref _showCurrentTimeMarker, value)) return;
+            AppState.Update(a => a.ShowCurrentTimeMarker = value);
+            ApplyMarkerDisplay();
         }
     }
 
     /// <summary>
-    /// Pushes the current <see cref="MarkerDisplayMode"/> onto every bar - both the
-    /// here-and-now flag and whether to draw anything at all (see
-    /// <see cref="BarViewModel.HereAndNowMode"/> and <see cref="BarViewModel.ShowMarkers"/>).
-    /// Split out from the setter so <see cref="LoadCollapsedState"/> can apply the restored
-    /// mode to bars the constructor already created without re-persisting it.
+    /// Backs "Daily marker in week": the fixed calendar-boundary ticks on the week bars,
+    /// tonight's boundary in red. Ticked together with <see cref="ShowCurrentTimeMarker"/>
+    /// the ticks stay but all draw muted, the red going to the clock's marker alone - two red
+    /// lines on one bar would leave it unclear which one the pace colours follow. Off until
+    /// first ticked.
     /// </summary>
-    private void ApplyMarkerDisplayMode()
+    public bool ShowDailyMarkers
     {
-        var hereAndNow = _markerDisplayMode == MarkerDisplayMode.HereAndNow;
-        var show = _markerDisplayMode != MarkerDisplayMode.None;
-
-        foreach (var bar in ClaudeBars) { bar.HereAndNowMode = hereAndNow; bar.ShowMarkers = show; }
-        foreach (var bar in CopilotBars) { bar.HereAndNowMode = hereAndNow; bar.ShowMarkers = show; }
-        foreach (var bar in PacingBars) { bar.HereAndNowMode = hereAndNow; bar.ShowMarkers = show; }
+        get => _showDailyMarkers;
+        set
+        {
+            if (!Set(ref _showDailyMarkers, value)) return;
+            AppState.Update(a => a.ShowDailyMarkers = value);
+            ApplyMarkerDisplay();
+        }
     }
 
     /// <summary>
-    /// Backs the "Daily view in &quot;Week&quot;" item. CheckBox rather than Radio (see the
-    /// menu's own comment), so unchecking the one already selected is not a real choice -
-    /// there is always exactly one active display - and just snaps the checkmark back on,
-    /// the same way <see cref="SetWorkDay"/> does for the last day left in "Workdays in a week".
+    /// Pushes both "Display of markers" ticks onto every bar (see
+    /// <see cref="BarViewModel.ShowCurrentTimeMarker"/> and
+    /// <see cref="BarViewModel.ShowDailyMarkers"/>). Split out from the setters so
+    /// <see cref="LoadCollapsedState"/> can apply the restored settings to bars the
+    /// constructor already created without re-persisting them.
     /// </summary>
-    public bool IsMarkerDisplayDaily
+    private void ApplyMarkerDisplay()
     {
-        get => _markerDisplayMode == MarkerDisplayMode.Daily;
-        set
+        foreach (var bar in AllBars)
         {
-            if (value) MarkerDisplayMode = MarkerDisplayMode.Daily;
-            else OnPropertyChanged(nameof(IsMarkerDisplayDaily));
+            bar.ShowCurrentTimeMarker = _showCurrentTimeMarker;
+            bar.ShowDailyMarkers = _showDailyMarkers;
         }
+
+        // Which marker the pace is judged against just changed with it (see
+        // BarViewModel.IsAheadOfPace), so any bar's red may have come or gone.
+        PaceVerdictChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>Backs the "Here-and-now time in all" item - see <see cref="IsMarkerDisplayDaily"/>.</summary>
-    public bool IsMarkerDisplayHereAndNow
-    {
-        get => _markerDisplayMode == MarkerDisplayMode.HereAndNow;
-        set
-        {
-            if (value) MarkerDisplayMode = MarkerDisplayMode.HereAndNow;
-            else OnPropertyChanged(nameof(IsMarkerDisplayHereAndNow));
-        }
-    }
+    /// <summary>
+    /// Raised when a bar's pace verdict (<see cref="BarViewModel.IsAheadOfPace"/>) may have
+    /// changed with no poll behind it - a "Display of markers" tick, or the clock marker
+    /// passing a bar's fill. The tray ring reads that verdict through the bar's FillColour
+    /// and is otherwise repainted only after a poll, so without this it would keep the old
+    /// colour for up to a whole refresh interval.
+    /// </summary>
+    public event EventHandler? PaceVerdictChanged;
 
-    /// <summary>Backs the "Show no markers" item - see <see cref="IsMarkerDisplayDaily"/>.</summary>
-    public bool IsMarkerDisplayNone
-    {
-        get => _markerDisplayMode == MarkerDisplayMode.None;
-        set
-        {
-            if (value) MarkerDisplayMode = MarkerDisplayMode.None;
-            else OnPropertyChanged(nameof(IsMarkerDisplayNone));
-        }
-    }
+    /// <summary>
+    /// Every bar on every panel, for the settings that apply to all of them alike - one
+    /// list, so a panel added later cannot be left out of some loops and not others.
+    /// </summary>
+    private IEnumerable<BarViewModel> AllBars => ClaudeBars.Concat(CopilotBars).Concat(PacingBars);
 
     /// <summary>
     /// Width of the label column, shared by every bar so they line up. It is measured from
@@ -2908,7 +2935,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         foreach (var bar in ClaudeBars)
         {
             // Markers is null on SESSION - a 5h window has no midnight to tick at - even
-            // though it now carries a MarkerWindowEnd too, for the here-and-now display. Only
+            // though it now carries a MarkerWindowEnd too, for the current time marker. Only
             // a bar with ticks to begin with needs them rebuilt across the date change.
             if (bar.Markers is null) continue;
             if (bar.MarkerWindowEnd is not { } end) continue;
@@ -2928,16 +2955,17 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// <summary>
     /// Re-announces every bar's "here-and-now" marker so it visibly creeps forward between
     /// polls, the same way <see cref="RefreshResetCaptions"/> keeps the countdown captions
-    /// live. A no-op whenever the display is off - see <see cref="BarViewModel.TickNowMarker"/>
-    /// - so this costs nothing while "Daily view in Week" is selected.
+    /// live. A no-op whenever the marker is off - see <see cref="BarViewModel.TickNowMarker"/>
+    /// - so this costs nothing while "Current time marker" is unticked.
     /// </summary>
     private void RefreshNowMarkers()
     {
-        if (_markerDisplayMode != MarkerDisplayMode.HereAndNow) return;
+        if (!_showCurrentTimeMarker) return;
 
-        foreach (var bar in ClaudeBars) bar.TickNowMarker();
-        foreach (var bar in CopilotBars) bar.TickNowMarker();
-        foreach (var bar in PacingBars) bar.TickNowMarker();
+        // |= does not short-circuit, so every bar is ticked even after one has flipped.
+        var flipped = false;
+        foreach (var bar in AllBars) flipped |= bar.TickNowMarker();
+        if (flipped) PaceVerdictChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>
@@ -3058,14 +3086,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
         foreach (var day in WorkWeek.MondayFirst)
             OnPropertyChanged(WorkDayProperty(day));
 
-        // Absent, unrecognised, or invalid means never set: stay on "Daily view in Week".
-        _markerDisplayMode = Enum.TryParse<MarkerDisplayMode>(state.MarkerDisplayMode, out var mode)
-            ? mode
-            : MarkerDisplayMode.Daily;
-        OnPropertyChanged(nameof(IsMarkerDisplayDaily));
-        OnPropertyChanged(nameof(IsMarkerDisplayHereAndNow));
-        OnPropertyChanged(nameof(IsMarkerDisplayNone));
-        ApplyMarkerDisplayMode();
+        // Absent means never set: the clock's marker alone.
+        _showCurrentTimeMarker = state.ShowCurrentTimeMarker ?? true;
+        _showDailyMarkers = state.ShowDailyMarkers ?? false;
+        OnPropertyChanged(nameof(ShowCurrentTimeMarker));
+        OnPropertyChanged(nameof(ShowDailyMarkers));
+        ApplyMarkerDisplay();
 
         InitialiseAutostart(state);
 

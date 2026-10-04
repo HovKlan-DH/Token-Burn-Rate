@@ -1,3 +1,9 @@
+# 1.4.0, 2026-October-4
+-----------------------
+- Changed "Workdays in a week" can now be selected individually
+- Changed "Display of markers" can now be selected individually
+
+
 # 1.3.0, 2026-September-26
 --------------------------
 - Fixed the text "tokens" were changed to "credits" for GitHub Copilot

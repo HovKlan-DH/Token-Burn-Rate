@@ -49,15 +49,18 @@ public sealed class UsageBar : Control
     /// is drawn as "today" - see <see cref="MarkerAccentBrush"/> - the rest as discrete,
     /// muted ticks regardless of whether they fall before or after it.
     ///
-    /// Ignored whenever <see cref="NowMarker"/> is set - the "Daily view in Week" and
-    /// "Here-and-now time in all" displays are mutually exclusive per bar.
+    /// Drawn while <see cref="ShowDailyMarkers"/> is on. Whenever <see cref="NowMarker"/> is
+    /// set as well every tick draws muted, today's included - the accent is the clock's own
+    /// marker then.
     /// </summary>
     public static readonly StyledProperty<IReadOnlyList<double>?> MarkersProperty =
         AvaloniaProperty.Register<UsageBar, IReadOnlyList<double>?>(nameof(Markers));
 
     /// <summary>
     /// Index into <see cref="Markers"/> of "today". Negative means there is no "today" to
-    /// mark - a window that has not started yet - and every tick draws muted.
+    /// mark - a window that has not started yet - and every tick draws muted. Ignored while
+    /// <see cref="NowMarker"/> is set: today's tick is still drawn then, but muted like the
+    /// rest - see <see cref="MarkersProperty"/>.
     /// </summary>
     public static readonly StyledProperty<int> TodayMarkerIndexProperty =
         AvaloniaProperty.Register<UsageBar, int>(nameof(TodayMarkerIndex), -1);
@@ -67,36 +70,39 @@ public sealed class UsageBar : Control
         AvaloniaProperty.Register<UsageBar, IBrush?>(nameof(MarkerAccentBrush));
 
     /// <summary>
-    /// Fraction (0-1) along the track of the "here-and-now" marker - the "Here-and-now time
-    /// in all" display mode's single accented marker, tracking the clock's own position
+    /// Fraction (0-1) along the track of the "here-and-now" marker - the context menu's
+    /// "Current time marker", a single accented marker tracking the clock's own position
     /// within this bar's window rather than a fixed calendar boundary. NaN means this bar
-    /// has no window to place one in, or the display is in its other mode ("Daily view in
-    /// Week") - either way nothing is drawn here.
+    /// has no window to place one in, or the marker is unticked - either way nothing is
+    /// drawn here.
     ///
-    /// Set instead of <see cref="Markers"/>/<see cref="TodayMarkerIndex"/> rather than
-    /// alongside them: the two displays are mutually exclusive per bar, and drawing both
-    /// would put two accented ticks on the same track for no reading either display intends.
+    /// Drawn on its own or over <see cref="Markers"/>' day ticks. With the ticks it takes the
+    /// accent over from <see cref="TodayMarkerIndex"/> rather than adding a second one: two
+    /// red ticks on one track - today's boundary and the clock - would leave it unclear which
+    /// one the pace colours follow.
     /// </summary>
     public static readonly StyledProperty<double> NowMarkerProperty =
         AvaloniaProperty.Register<UsageBar, double>(nameof(NowMarker), double.NaN);
 
     /// <summary>
-    /// Whether to draw any marker at all - the context menu's "Display of markers" third
-    /// option, "Show no markers". False suppresses both <see cref="Markers"/>/
-    /// <see cref="TodayMarkerIndex"/>'s discrete ticks and <see cref="NowMarker"/>'s single
-    /// one, without touching either binding - the pace colours derived from Markers/
-    /// TodayMarkerIndex (see BarViewModel.IsAheadOfPace) still need them set, only the
-    /// drawing is turned off.
+    /// Whether to draw <see cref="Markers"/>' day ticks - the context menu's "Daily marker in
+    /// week". False suppresses them without touching the binding, so ticking it again draws
+    /// them at once rather than at the next poll. <see cref="NowMarker"/> has no switch of its
+    /// own here: it is NaN whenever it is unticked.
+    ///
+    /// Off by default, as the setting itself is (see BarViewModel.ShowDailyMarkers): a bar
+    /// that is not bound to it, or not bound yet, draws no ticks rather than the opposite of
+    /// what the application shows.
     /// </summary>
-    public static readonly StyledProperty<bool> ShowMarkersProperty =
-        AvaloniaProperty.Register<UsageBar, bool>(nameof(ShowMarkers), true);
+    public static readonly StyledProperty<bool> ShowDailyMarkersProperty =
+        AvaloniaProperty.Register<UsageBar, bool>(nameof(ShowDailyMarkers), false);
 
     static UsageBar()
     {
         AffectsRender<UsageBar>(FractionProperty, FillProperty, TrackProperty, CornerProperty,
             CaptionProperty, CaptionBrushProperty, CaptionHighlightBrushProperty,
             MarkersProperty, TodayMarkerIndexProperty, MarkerAccentBrushProperty,
-            NowMarkerProperty, ShowMarkersProperty);
+            NowMarkerProperty, ShowDailyMarkersProperty);
 
         // Gaining or losing a caption changes how tall the row needs to be - see
         // MeasureOverride - which a render invalidation alone would not pick up.
@@ -169,10 +175,10 @@ public sealed class UsageBar : Control
         set => SetValue(NowMarkerProperty, value);
     }
 
-    public bool ShowMarkers
+    public bool ShowDailyMarkers
     {
-        get => GetValue(ShowMarkersProperty);
-        set => SetValue(ShowMarkersProperty, value);
+        get => GetValue(ShowDailyMarkersProperty);
+        set => SetValue(ShowDailyMarkersProperty, value);
     }
 
 
@@ -316,7 +322,8 @@ public sealed class UsageBar : Control
     /// alongside those already behind it. The entry at <see cref="TodayMarkerIndex"/> stands
     /// for "today" and is drawn both taller and thicker, in <see cref="MarkerAccentBrush"/>;
     /// the rest are shorter, muted ticks that read as calendar structure without competing
-    /// with the fill.
+    /// with the fill. In the "Current time marker" display every tick is muted and
+    /// <see cref="NowMarker"/> carries the accent instead.
     ///
     /// The today marker carries its weight through size rather than colour alone: it shares
     /// the red the fill itself turns once the bar is past that marker, so on the run it most
@@ -324,27 +331,32 @@ public sealed class UsageBar : Control
     /// </summary>
     private void DrawMarkers(DrawingContext context, double w, double barTop, double barHeight)
     {
-        // "Show no markers": Markers/TodayMarkerIndex/NowMarker are left set for the pace
-        // colours that read them (see ShowMarkersProperty), only the drawing is skipped.
-        if (!ShowMarkers) return;
-
-        // "Here-and-now" mode: one accented marker, no discrete ticks at all - see
-        // NowMarkerProperty. Takes over the whole method rather than adding another entry to
-        // Markers, since the two displays never draw on the same bar at once.
+        // Either, both or neither. Alongside the clock's marker the day ticks all draw
+        // muted, the accent being that marker's instead - see NowMarkerProperty. It is drawn
+        // last, so it sits on top of a tick it happens to coincide with rather than under it.
         var now = NowMarker;
-        if (!double.IsNaN(now))
-        {
-            DrawSingleMarker(context, w, barTop, barHeight, now);
-            return;
-        }
+        var hereAndNow = !double.IsNaN(now);
 
+        // Unticked, Markers/TodayMarkerIndex are left set for the pace colours that read
+        // them (see ShowDailyMarkersProperty), only the drawing is skipped.
+        if (ShowDailyMarkers)
+            DrawTicks(context, w, barTop, barHeight, hereAndNow ? -1 : TodayMarkerIndex);
+
+        if (hereAndNow)
+            DrawSingleMarker(context, w, barTop, barHeight, now);
+    }
+
+    /// <summary>
+    /// <see cref="Markers"/>' ticks, the one at <paramref name="todayIndex"/> accented - see
+    /// <see cref="DrawMarkers"/>. Negative accents none.
+    /// </summary>
+    private void DrawTicks(DrawingContext context, double w, double barTop, double barHeight, int todayIndex)
+    {
         var markers = Markers;
         if (markers is null || markers.Count == 0) return;
 
-        // Negative means "no today" - see TodayMarkerIndexProperty. Left as-is so it matches
-        // no index, rather than folded onto the last entry.
-        var todayIndex = TodayMarkerIndex;
-
+        // A negative todayIndex means "no today" - see TodayMarkerIndexProperty. Left as-is
+        // so it matches no index, rather than folded onto the last entry.
         for (var i = 0; i < markers.Count; i++)
         {
             var m = markers[i];
@@ -373,10 +385,10 @@ public sealed class UsageBar : Control
     }
 
     /// <summary>
-    /// The "here-and-now" display's single marker - see <see cref="NowMarkerProperty"/>.
-    /// Always drawn accented, at the same size and in the same brush as the "today" tick the
-    /// other display uses, so switching between the two modes changes what a bar shows, not
-    /// how a marker on it looks.
+    /// The "Current time marker" - see <see cref="NowMarkerProperty"/>. Always drawn
+    /// accented, at the same size and in the same brush as the "today" tick "Daily marker in
+    /// week" draws on its own, so ticking one or the other changes where a bar's red line
+    /// sits, not how it looks.
     /// </summary>
     private void DrawSingleMarker(DrawingContext context, double w, double barTop, double barHeight, double fraction)
     {
